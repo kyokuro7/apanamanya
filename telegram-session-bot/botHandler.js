@@ -157,6 +157,7 @@ bot.action(/^acc_manage_(.+)$/, async (ctx) => {
       ...Markup.inlineKeyboard([
         [Markup.button.callback("🔐 Kelola Password 2FA", `acc_2fa_${phone}`)],
         [Markup.button.callback("📧 Kelola Email Recovery", `acc_email_${phone}`)],
+        [Markup.button.callback("🔑 Open OTP", `acc_otp_${phone}`)],
         [Markup.button.callback("🔄 Cek Limit", `acc_checklimit_${phone}`)],
         [Markup.button.callback("◀️ Kembali", "list_accounts")],
       ]),
@@ -369,6 +370,117 @@ bot.action(/^set_limit_yes_(.+)$/, (ctx) => {
     parse_mode: "Markdown",
     ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)]]),
   });
+});
+
+// ==================== OPEN OTP ====================
+bot.action(/^acc_otp_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+
+  return ctx.editMessageText(
+    `🔑 *Open OTP*\n\n📞 Akun: \`${phone}\`\n\nPilih aksi:`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("📩 OTP (Tampilkan Kode)", `otp_show_${phone}`)],
+        [Markup.button.callback("🚪 Logout", `otp_logout_confirm_${phone}`)],
+        [Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)],
+      ]),
+    }
+  );
+});
+
+// --- Tampilkan Kode OTP ---
+bot.action(/^otp_show_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText(
+    `⏳ Meminta kode OTP untuk \`${phone}\`...\n_Tunggu beberapa detik._`,
+    { parse_mode: "Markdown" }
+  );
+
+  const result = await sessionManager.getOTPCode(phone);
+
+  if (result.success) {
+    return ctx.editMessageText(
+      `🔑 *Kode OTP Berhasil Didapatkan!*\n\n` +
+        `📞 Akun: \`${phone}\`\n` +
+        `📩 Kode OTP: \`${result.code}\`\n\n` +
+        `⚠️ _Kode ini hanya berlaku beberapa menit._`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🔄 Minta Kode Baru", `otp_show_${phone}`)],
+          [Markup.button.callback("◀️ Kembali", `acc_otp_${phone}`)],
+        ]),
+      }
+    );
+  } else {
+    return ctx.editMessageText(
+      `❌ Gagal mendapatkan kode OTP:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🔄 Coba Lagi", `otp_show_${phone}`)],
+          [Markup.button.callback("◀️ Kembali", `acc_otp_${phone}`)],
+        ]),
+      }
+    );
+  }
+});
+
+// --- Logout: Konfirmasi ---
+bot.action(/^otp_logout_confirm_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+
+  return ctx.editMessageText(
+    `🚪 *Konfirmasi Logout*\n\n` +
+      `📞 Akun: \`${phone}\`\n\n` +
+      `⚠️ *Perhatian:* Ini akan mengeluarkan (logout) sesi bot dari akun ini.\n` +
+      `File session akan dihapus dan kamu perlu login ulang.\n\n` +
+      `Yakin ingin logout?`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("✅ Ya, Logout", `otp_logout_yes_${phone}`)],
+        [Markup.button.callback("❌ Batal", `acc_otp_${phone}`)],
+      ]),
+    }
+  );
+});
+
+// --- Logout: Eksekusi ---
+bot.action(/^otp_logout_yes_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText(`⏳ Logout dari \`${phone}\`...`, {
+    parse_mode: "Markdown",
+  });
+
+  const result = await sessionManager.logoutSession(phone);
+
+  if (result.success) {
+    return ctx.editMessageText(
+      `✅ *Berhasil logout!*\n\n` +
+        `Akun \`${phone}\` telah dikeluarkan.\n` +
+        `File session telah dihapus.`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+        ]),
+      }
+    );
+  } else {
+    return ctx.editMessageText(
+      `❌ Gagal logout:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", `acc_otp_${phone}`)],
+        ]),
+      }
+    );
+  }
 });
 
 // ==================== BROADCAST (see broadcastHandler.js) ====================

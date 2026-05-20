@@ -834,6 +834,69 @@ async function sendCopyMessage(client, entity, bcMessage) {
   }
 }
 
+/**
+ * Ambil kode OTP login dari akun (meminta Telegram mengirim kode login ke akun itu sendiri)
+ * Menggunakan method account.createLoginToken atau messages dari ServiceNotifications
+ * Alternatif: Kirim request login baru ke diri sendiri untuk mendapatkan kode
+ * @param {string} phone - Nomor telepon
+ * @returns {object} - { success, code, error }
+ */
+async function getOTPCode(phone) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
+    );
+    await client.connect();
+
+    // Kirim request kode login baru ke nomor sendiri
+    const sentCode = await client.invoke(
+      new Api.auth.SendCode({
+        phoneNumber: phone,
+        apiId: config.API_ID,
+        apiHash: config.API_HASH,
+        settings: new Api.CodeSettings({
+          allowFlashcall: false,
+          currentNumber: true,
+          allowAppHash: false,
+        }),
+      })
+    );
+
+    // Tunggu sebentar agar pesan kode masuk
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // Ambil pesan terbaru dari Telegram (service notifications / kode login)
+    // Kode biasanya dikirim oleh user id 777000 (Telegram)
+    const messages = await client.getMessages(777000, { limit: 1 });
+
+    let code = null;
+    if (messages && messages.length > 0) {
+      const msgText = messages[0].message || "";
+      // Ekstrak kode dari pesan (biasanya 5 digit)
+      const codeMatch = msgText.match(/(\d{5,6})/);
+      if (codeMatch) {
+        code = codeMatch[1];
+      }
+    }
+
+    await client.disconnect();
+
+    if (code) {
+      return { success: true, code, phoneCodeHash: sentCode.phoneCodeHash };
+    } else {
+      return { success: false, error: "Kode OTP tidak ditemukan di pesan. Coba lagi dalam beberapa detik." };
+    }
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
 module.exports = {
   loginStates,
   startLogin,
@@ -858,6 +921,7 @@ module.exports = {
   check2FAStatus,
   updateSessionInfo,
   checkSpamLimit,
+  getOTPCode,
 
   broadcastToAllGroups,
 };
