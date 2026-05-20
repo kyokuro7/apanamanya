@@ -1281,67 +1281,54 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Masukkan *email baru* untuk recovery:", { parse_mode: "Markdown" });
   }
 
-  // Email: step 2 - masukkan email baru
+  // Email: step 2 - masukkan email baru, trigger kirim kode ke email
   if (state.step === "email_new") {
     // Validasi format email sederhana
     if (!text.includes("@") || !text.includes(".")) {
       return ctx.reply("❌ Format email tidak valid. Coba lagi:", { parse_mode: "Markdown" });
     }
 
-    // Simpan email ke state, lanjut minta kode
+    // Simpan email ke state, lanjut minta kode verifikasi
     userStates.set(userId, { ...state, step: "email_code", newEmail: text });
 
-    await ctx.reply(
+    return ctx.reply(
       `📧 Email: \`${text}\`\n\n` +
-        `⏳ Telegram akan mengirim kode verifikasi ke email tersebut.\n` +
-        `Masukkan *kode verifikasi* dari email:`,
+        `⏳ Telegram mengirim kode verifikasi ke email tersebut.\n` +
+        `Cek inbox email kamu, lalu masukkan *kode verifikasi*:`,
       { parse_mode: "Markdown" }
     );
+  }
 
-    // Mulai proses updateEmail di background dengan callback
-    // Simpan resolve function ke state agar bisa di-resolve saat user input kode
-    const emailPromise = new Promise((resolve) => {
-      userStates.set(userId, { ...userStates.get(userId), emailCodeResolve: resolve });
-    });
+  // Email: step 3 - masukkan kode verifikasi email → panggil updateEmail dengan kode
+  if (state.step === "email_code") {
+    const code = text.replace(/\s/g, "");
 
-    // Jalankan updateEmail dengan callback yang tunggu input user
+    await ctx.reply("⏳ Memverifikasi kode email...");
+
     const result = await sessionManager.updateEmail(
       state.phone,
       state.currentPassword,
-      text,
-      async () => {
-        // Tunggu user input kode email
-        const code = await emailPromise;
-        return code;
-      }
+      state.newEmail,
+      async () => code
     );
 
     userStates.delete(userId);
 
     if (result.success) {
       // Simpan email ke session info
-      sessionManager.updateSessionInfo(state.phone, { email: text });
+      sessionManager.updateSessionInfo(state.phone, { email: state.newEmail });
       return ctx.reply(
-        `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${text}\``,
+        `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${state.newEmail}\``,
         {
           parse_mode: "Markdown",
           ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_email_${state.phone}`)]]),
         }
       );
     } else {
-      return ctx.reply(`❌ Gagal atur email:\n\`${result.error}\``, {
+      return ctx.reply(`❌ Gagal atur email:\n\`${result.error}\`\n\nCoba masukkan ulang kode:`, {
         parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_email_${state.phone}`)]]),
       });
     }
-  }
-
-  // Email: step 3 - masukkan kode verifikasi email
-  if (state.step === "email_code") {
-    if (state.emailCodeResolve) {
-      state.emailCodeResolve(text);
-    }
-    return; // Response akan di-handle oleh email_new step di atas
   }
 });
 
