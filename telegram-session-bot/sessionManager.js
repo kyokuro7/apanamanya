@@ -764,105 +764,59 @@ async function checkSpamLimit(phone) {
 }
 
 /**
- * Kirim pesan broadcast ke target dari satu akun
- * @param {string} phone - Nomor telepon pengirim
- * @param {string} target - Target (username, group link, atau user ID)
- * @param {string} message - Pesan yang akan dikirim
- * @returns {object} - { success, error }
+ * Broadcast pesan ke semua grup dari satu atau banyak akun
+ * @param {Array<string>} phones - Daftar nomor telepon
+ * @param {object} bcMessage - { type, text, fileId, caption, entities, captionEntities }
+ * @param {number} grupDelay - Jeda antar grup (ms)
+ * @returns {object} - { success, results: [{phone, sent, failed, total, error}] }
  */
-async function sendBroadcastMessage(phone, target, message) {
-  const sessionString = loadSession(phone);
-  if (!sessionString) return { success: false, error: "Session not found" };
-
-  let client;
-  try {
-    client = new TelegramClient(
-      new StringSession(sessionString),
-      config.API_ID,
-      config.API_HASH,
-      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
-    );
-    await client.connect();
-
-    // Resolve target entity
-    const entity = await client.getEntity(target);
-    await client.sendMessage(entity, { message: message });
-
-    await client.disconnect();
-    return { success: true };
-  } catch (err) {
-    try { if (client) await client.disconnect(); } catch (e) {}
-    return { success: false, error: err.errorMessage || err.message };
-  }
-}
-
-/**
- * Forward pesan dari satu akun ke target
- * @param {string} phone - Nomor telepon pengirim
- * @param {string} target - Target (username, group link, atau user ID)
- * @param {string} fromPeer - Peer asal pesan
- * @param {Array<number>} messageIds - ID pesan yang akan di-forward
- * @returns {object} - { success, error }
- */
-async function forwardBroadcastMessage(phone, target, fromPeer, messageIds) {
-  const sessionString = loadSession(phone);
-  if (!sessionString) return { success: false, error: "Session not found" };
-
-  let client;
-  try {
-    client = new TelegramClient(
-      new StringSession(sessionString),
-      config.API_ID,
-      config.API_HASH,
-      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
-    );
-    await client.connect();
-
-    const targetEntity = await client.getEntity(target);
-    const fromEntity = await client.getEntity(fromPeer);
-
-    await client.forwardMessages(targetEntity, {
-      messages: messageIds,
-      fromPeer: fromEntity,
-    });
-
-    await client.disconnect();
-    return { success: true };
-  } catch (err) {
-    try { if (client) await client.disconnect(); } catch (e) {}
-    return { success: false, error: err.errorMessage || err.message };
-  }
-}
-
-/**
- * Broadcast pesan ke target dari banyak akun dengan delay
- * @param {Array<string>} phones - Daftar nomor telepon pengirim
- * @param {string} target - Target (username, group link, atau user ID)
- * @param {string} message - Pesan yang akan dikirim
- * @param {number} delay - Delay antar pengiriman (ms)
- * @param {function} onProgress - Callback progress (phone, success, error, index, total)
- * @returns {object} - { success, results: [{phone, success, error}] }
- */
-async function broadcastToTarget(phones, target, message, delay = 3000, onProgress = null) {
+async function broadcastToAllGroups(phones, bcMessage, grupDelay = 500) {
   const results = [];
 
-  for (let i = 0; i < phones.length; i++) {
-    const phone = phones[i];
-    const result = await sendBroadcastMessage(phone, target, message);
-
-    results.push({
-      phone,
-      success: result.success,
-      error: result.error || null,
-    });
-
-    if (onProgress) {
-      onProgress(phone, result.success, result.error, i, phones.length);
+  for (const phone of phones) {
+    const sessionString = loadSession(phone);
+    if (!sessionString) {
+      results.push({ phone, success: false, sent: 0, failed: 0, total: 0, error: "Session not found" });
+      continue;
     }
 
-    // Delay antar pengiriman (kecuali yang terakhir)
-    if (i < phones.length - 1 && delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
+    let client;
+    try {
+      client = new TelegramClient(
+        new StringSession(sessionString),
+        config.API_ID,
+        config.API_HASH,
+        { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
+      );
+      await client.connect();
+
+      // Ambil semua dialog
+      const dialogs = await client.getDialogs({ limit: 500 });
+      const groups = [];
+      for (const dialog of dialogs) {
+        if (dialog.isGroup || (dialog.entity && dialog.entity.className === "Channel" && dialog.entity.megagroup)) {
+          groups.push(dialog);
+        }
+      }
+
+      let sent = 0, failed = 0;
+      for (let i = 0; i < groups.length; i++) {
+        try {
+          await sendCopyMessage(client, groups[i].entity, bcMessage);
+          sent++;
+        } catch (e) {
+          failed++;
+        }
+        if (i < groups.length - 1 && grupDelay > 0) {
+          await new Promise((r) => setTimeout(r, grupDelay));
+        }
+      }
+
+      await client.disconnect();
+      results.push({ phone, success: true, sent, failed, total: groups.length });
+    } catch (err) {
+      try { if (client) await client.disconnect(); } catch (e) {}
+      results.push({ phone, success: false, sent: 0, failed: 0, total: 0, error: err.errorMessage || err.message });
     }
   }
 
@@ -870,39 +824,14 @@ async function broadcastToTarget(phones, target, message, delay = 3000, onProgre
 }
 
 /**
- * Broadcast forward pesan ke target dari banyak akun dengan delay
- * @param {Array<string>} phones - Daftar nomor telepon pengirim
- * @param {string} target - Target
- * @param {string} fromPeer - Peer asal pesan
- * @param {Array<number>} messageIds - ID pesan yang akan di-forward
- * @param {number} delay - Delay antar pengiriman (ms)
- * @param {function} onProgress - Callback progress
- * @returns {object} - { success, results: [{phone, success, error}] }
+ * Send copy message (bukan forward) ke entity
+ * GramJS sendMessage hanya support text. Untuk media, kirim text/caption.
  */
-async function broadcastForwardToTarget(phones, target, fromPeer, messageIds, delay = 3000, onProgress = null) {
-  const results = [];
-
-  for (let i = 0; i < phones.length; i++) {
-    const phone = phones[i];
-    const result = await forwardBroadcastMessage(phone, target, fromPeer, messageIds);
-
-    results.push({
-      phone,
-      success: result.success,
-      error: result.error || null,
-    });
-
-    if (onProgress) {
-      onProgress(phone, result.success, result.error, i, phones.length);
-    }
-
-    // Delay antar pengiriman (kecuali yang terakhir)
-    if (i < phones.length - 1 && delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
+async function sendCopyMessage(client, entity, bcMessage) {
+  const text = bcMessage.text || bcMessage.caption || "";
+  if (text) {
+    await client.sendMessage(entity, { message: text });
   }
-
-  return { success: true, results };
 }
 
 module.exports = {
@@ -929,8 +858,6 @@ module.exports = {
   check2FAStatus,
   updateSessionInfo,
   checkSpamLimit,
-  sendBroadcastMessage,
-  forwardBroadcastMessage,
-  broadcastToTarget,
-  broadcastForwardToTarget,
+
+  broadcastToAllGroups,
 };
