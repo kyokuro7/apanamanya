@@ -346,6 +346,123 @@ async function logoutSession(phone) {
   }
 }
 
+/**
+ * Export semua session sebagai satu file backup JSON
+ * @returns {object} - { success, filePath, data, error }
+ */
+function createBackup() {
+  const sessionsDir = config.SESSIONS_DIR;
+  if (!fs.existsSync(sessionsDir)) {
+    return { success: false, error: "Tidak ada folder sessions" };
+  }
+
+  const files = fs.readdirSync(sessionsDir).filter((f) => f.endsWith(".json"));
+  if (files.length === 0) {
+    return { success: false, error: "Tidak ada session yang tersimpan" };
+  }
+
+  const allSessions = [];
+  for (const file of files) {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(sessionsDir, file), "utf8"));
+      allSessions.push(data);
+    } catch (err) {
+      // skip file rusak
+    }
+  }
+
+  if (allSessions.length === 0) {
+    return { success: false, error: "Tidak ada session valid" };
+  }
+
+  const backupData = {
+    version: "1.0",
+    createdAt: new Date().toISOString(),
+    totalAccounts: allSessions.length,
+    sessions: allSessions,
+  };
+
+  // Simpan ke file temporary
+  const backupDir = path.join(path.dirname(sessionsDir), "backups");
+  if (!fs.existsSync(backupDir)) {
+    fs.mkdirSync(backupDir, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupFileName = `backup_sessions_${timestamp}.json`;
+  const backupFilePath = path.join(backupDir, backupFileName);
+
+  fs.writeFileSync(backupFilePath, JSON.stringify(backupData, null, 2));
+
+  return { success: true, filePath: backupFilePath, data: backupData };
+}
+
+/**
+ * Restore session dari data backup - cek validitas masing-masing session
+ * @param {object} backupData - Data backup JSON yang sudah di-parse
+ * @returns {object} - { success, restored: [...], failed: [...], error }
+ */
+async function restoreBackup(backupData) {
+  if (!backupData || !backupData.sessions || !Array.isArray(backupData.sessions)) {
+    return { success: false, error: "Format backup tidak valid" };
+  }
+
+  const restored = [];
+  const failed = [];
+
+  for (const sessionData of backupData.sessions) {
+    if (!sessionData.phone || !sessionData.session) {
+      failed.push({
+        phone: sessionData.phone || "Unknown",
+        reason: "Data tidak lengkap (phone/session missing)",
+      });
+      continue;
+    }
+
+    // Cek apakah session masih valid dengan mencoba connect
+    try {
+      const client = new TelegramClient(
+        new StringSession(sessionData.session),
+        config.API_ID,
+        config.API_HASH,
+        { connectionRetries: 3 }
+      );
+      await client.connect();
+
+      // Cek apakah masih bisa getMe (session masih aktif)
+      const me = await client.getMe();
+      await client.disconnect();
+
+      // Session valid! Simpan ke folder sessions
+      const info = {
+        id: me.id ? me.id.toString() : sessionData.info?.id || "",
+        firstName: me.firstName || sessionData.info?.firstName || "",
+        lastName: me.lastName || sessionData.info?.lastName || "",
+        username: me.username || sessionData.info?.username || "",
+        phone: me.phone || sessionData.phone,
+      };
+
+      saveSession(sessionData.phone, sessionData.session, info);
+
+      restored.push({
+        phone: sessionData.phone,
+        name: `${info.firstName} ${info.lastName}`.trim(),
+        username: info.username,
+      });
+    } catch (err) {
+      failed.push({
+        phone: sessionData.phone,
+        name: sessionData.info
+          ? `${sessionData.info.firstName || ""} ${sessionData.info.lastName || ""}`.trim()
+          : "Unknown",
+        reason: err.errorMessage || err.message || "Session expired/invalid",
+      });
+    }
+  }
+
+  return { success: true, restored, failed };
+}
+
 module.exports = {
   loginStates,
   startLogin,
@@ -360,4 +477,6 @@ module.exports = {
   terminateSession,
   terminateAllOtherSessions,
   logoutSession,
+  createBackup,
+  restoreBackup,
 };

@@ -29,6 +29,7 @@ bot.start((ctx) => {
         [Markup.button.callback("📋 Daftar Akun", "list_accounts")],
         [Markup.button.callback("🔍 Cek Session", "check_session")],
         [Markup.button.callback("🗑 Hapus Session", "manage_session")],
+        [Markup.button.callback("💾 Backup & Pulihkan", "backup_restore")],
         [Markup.button.callback("❌ Hapus Akun", "delete_account")],
       ]),
     }
@@ -47,6 +48,7 @@ bot.action("main_menu", (ctx) => {
         [Markup.button.callback("📋 Daftar Akun", "list_accounts")],
         [Markup.button.callback("🔍 Cek Session", "check_session")],
         [Markup.button.callback("🗑 Hapus Session", "manage_session")],
+        [Markup.button.callback("💾 Backup & Pulihkan", "backup_restore")],
         [Markup.button.callback("❌ Hapus Akun", "delete_account")],
       ]),
     }
@@ -507,6 +509,206 @@ bot.action(/^do_sess_out_(.+)$/, async (ctx) => {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([
           [Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)],
+        ]),
+      }
+    );
+  }
+});
+
+// ==================== BACKUP & PULIHKAN ====================
+bot.action("backup_restore", (ctx) => {
+  return ctx.editMessageText(
+    "💾 *Backup & Pulihkan*\n\nPilih aksi:",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("📦 Backup Session", "do_backup")],
+        [Markup.button.callback("📥 Pulihkan Session", "do_restore")],
+        [Markup.button.callback("◀️ Kembali", "main_menu")],
+      ]),
+    }
+  );
+});
+
+// ---------- BACKUP: Kirim file backup ke owner ----------
+bot.action("do_backup", async (ctx) => {
+  await ctx.editMessageText("⏳ Membuat backup semua session...", {
+    parse_mode: "Markdown",
+  });
+
+  const result = sessionManager.createBackup();
+
+  if (!result.success) {
+    return ctx.editMessageText(
+      `❌ Gagal backup:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", "backup_restore")],
+        ]),
+      }
+    );
+  }
+
+  // Kirim file backup ke owner
+  try {
+    const fs = require("fs");
+    await ctx.replyWithDocument(
+      { source: result.filePath, filename: require("path").basename(result.filePath) },
+      {
+        caption:
+          `📦 *Backup Session Berhasil!*\n\n` +
+          `📊 Total akun: ${result.data.totalAccounts}\n` +
+          `📅 Waktu: ${new Date().toLocaleString("id-ID")}\n\n` +
+          `_Simpan file ini dengan aman. Gunakan "Pulihkan" untuk memulihkan session._`,
+        parse_mode: "Markdown",
+      }
+    );
+
+    // Hapus file backup temporary
+    fs.unlinkSync(result.filePath);
+
+    return ctx.editMessageText("✅ File backup telah dikirim di atas.", {
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+      ]),
+    });
+  } catch (err) {
+    return ctx.editMessageText(
+      `❌ Gagal mengirim file backup:\n\`${err.message}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", "backup_restore")],
+        ]),
+      }
+    );
+  }
+});
+
+// ---------- PULIHKAN: Minta owner kirim file backup ----------
+bot.action("do_restore", (ctx) => {
+  userStates.set(ctx.from.id, { step: "waiting_backup_file" });
+
+  return ctx.editMessageText(
+    "📥 *Pulihkan Session*\n\n" +
+      "Kirimkan file backup `.json` yang ingin dipulihkan.\n\n" +
+      "_Bot akan membaca file, mengecek setiap session apakah masih aktif, " +
+      "dan memulihkan yang valid ke daftar akun._",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Batal", "main_menu")],
+      ]),
+    }
+  );
+});
+
+// Handle file document (untuk restore backup)
+bot.on("document", async (ctx) => {
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+
+  // Pastikan sedang dalam state waiting_backup_file
+  if (!state || state.step !== "waiting_backup_file") {
+    return ctx.reply("Ketik /start untuk memulai.");
+  }
+
+  const doc = ctx.message.document;
+
+  // Validasi file
+  if (!doc.file_name.endsWith(".json")) {
+    return ctx.reply(
+      "❌ File harus berformat `.json`\n\nKirim file backup yang benar.",
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  await ctx.reply("⏳ Membaca file backup dan memverifikasi session...\n_Ini mungkin memakan waktu._", {
+    parse_mode: "Markdown",
+  });
+
+  try {
+    // Download file
+    const fileLink = await ctx.telegram.getFileLink(doc.file_id);
+    const fetch = require("node-fetch");
+    const response = await fetch(fileLink.href);
+    const fileContent = await response.text();
+
+    // Parse JSON
+    let backupData;
+    try {
+      backupData = JSON.parse(fileContent);
+    } catch (e) {
+      userStates.delete(userId);
+      return ctx.reply(
+        "❌ File JSON tidak valid atau rusak.\n\nCoba kirim ulang file yang benar.",
+        {
+          parse_mode: "Markdown",
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback("🔄 Coba Lagi", "do_restore")],
+            [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+          ]),
+        }
+      );
+    }
+
+    // Restore
+    const result = await sessionManager.restoreBackup(backupData);
+    userStates.delete(userId);
+
+    if (!result.success) {
+      return ctx.reply(
+        `❌ Gagal pulihkan:\n\`${result.error}\``,
+        {
+          parse_mode: "Markdown",
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+          ]),
+        }
+      );
+    }
+
+    // Format hasil
+    let text = "📥 *Hasil Pemulihan Session:*\n\n";
+
+    if (result.restored.length > 0) {
+      text += `✅ *Berhasil dipulihkan (${result.restored.length}):*\n`;
+      result.restored.forEach((r, i) => {
+        const name = r.name || "Unknown";
+        const username = r.username ? `@${r.username}` : "";
+        text += `  ${i + 1}. ${name} ${username}\n     📞 \`${r.phone}\`\n`;
+      });
+      text += "\n";
+    }
+
+    if (result.failed.length > 0) {
+      text += `❌ *Gagal/Expired (${result.failed.length}):*\n`;
+      result.failed.forEach((f, i) => {
+        const name = f.name || "Unknown";
+        text += `  ${i + 1}. ${name} - \`${f.phone}\`\n     ⚠️ ${f.reason}\n`;
+      });
+      text += "\n";
+    }
+
+    text += `\n📊 Total: ${result.restored.length} berhasil, ${result.failed.length} gagal`;
+
+    return ctx.reply(text, {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("📋 Lihat Daftar Akun", "list_accounts")],
+        [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+      ]),
+    });
+  } catch (err) {
+    userStates.delete(userId);
+    return ctx.reply(
+      `❌ Error saat memproses file:\n\`${err.message}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🔄 Coba Lagi", "do_restore")],
+          [Markup.button.callback("◀️ Menu Utama", "main_menu")],
         ]),
       }
     );
