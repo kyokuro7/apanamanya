@@ -633,6 +633,28 @@ async function check2FAStatus(phone) {
   }
 }
 
+/**
+ * Update info di session file tanpa mengubah session string
+ * @param {string} phone - Nomor telepon
+ * @param {object} updates - Object berisi field yang ingin di-update (misal: { password, email })
+ * @returns {boolean}
+ */
+function updateSessionInfo(phone, updates) {
+  const sanitizedPhone = phone.replace(/[^0-9]/g, "");
+  const filePath = path.join(config.SESSIONS_DIR, `${sanitizedPhone}.json`);
+
+  if (!fs.existsSync(filePath)) return false;
+
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    data.info = { ...data.info, ...updates };
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
 module.exports = {
   loginStates,
   startLogin,
@@ -654,4 +676,5 @@ module.exports = {
   addPassword,
   updateEmail,
   check2FAStatus,
+  updateSessionInfo,
 };

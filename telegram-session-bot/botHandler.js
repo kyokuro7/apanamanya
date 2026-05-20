@@ -131,12 +131,18 @@ bot.action(/^acc_manage_(.+)$/, async (ctx) => {
   const id = account.info.id || "-";
   const username = account.info.username ? `@${account.info.username}` : "-";
 
+  // Ambil info password & email dari data tersimpan
+  const savedPassword = account.info.password || "-";
+  const savedEmail = account.info.email || "-";
+
   return ctx.editMessageText(
     `⚙️ *Kelola Akun*\n\n` +
       `🆔 ID: \`${id}\`\n` +
       `👤 Nama: *${name}*\n` +
       `📞 Nomor: \`${phone}\`\n` +
-      `🔗 Username: ${username}\n\n` +
+      `🔗 Username: ${username}\n` +
+      `🔑 Password: \`${savedPassword}\`\n` +
+      `📨 Surel: \`${savedEmail}\`\n\n` +
       `Pilih aksi:`,
     {
       parse_mode: "Markdown",
@@ -1042,6 +1048,9 @@ bot.on("text", async (ctx) => {
         const info = await getAccountInfoFromClient(state.client);
         sessionManager.saveSession(state.phone, result.session, info);
 
+        // Simpan password ke session info
+        sessionManager.updateSessionInfo(state.phone, { password: text });
+
         await state.client.disconnect();
         userStates.delete(userId);
 
@@ -1050,7 +1059,8 @@ bot.on("text", async (ctx) => {
             `🆔 ID: \`${info.id || "-"}\`\n` +
             `📞 Nomor: \`${state.phone}\`\n` +
             `👤 Nama: ${info.firstName || "-"} ${info.lastName || ""}\n` +
-            `🔗 Username: ${info.username ? "@" + info.username : "-"}`,
+            `🔗 Username: ${info.username ? "@" + info.username : "-"}\n` +
+            `🔑 Password: \`${text}\``,
           {
             parse_mode: "Markdown",
             ...Markup.inlineKeyboard([
@@ -1100,6 +1110,8 @@ bot.on("text", async (ctx) => {
     userStates.delete(userId);
 
     if (result.success) {
+      // Simpan password baru ke session info
+      sessionManager.updateSessionInfo(state.phone, { password: state.newPassword });
       return ctx.reply("✅ *Password 2FA berhasil diubah!*", {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
@@ -1121,6 +1133,8 @@ bot.on("text", async (ctx) => {
     userStates.delete(userId);
 
     if (result.success) {
+      // Hapus password dari session info
+      sessionManager.updateSessionInfo(state.phone, { password: "" });
       return ctx.reply("✅ *Password 2FA berhasil dihapus!*", {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
@@ -1152,6 +1166,8 @@ bot.on("text", async (ctx) => {
     userStates.delete(userId);
 
     if (result.success) {
+      // Simpan password ke session info
+      sessionManager.updateSessionInfo(state.phone, { password: state.newPassword });
       return ctx.reply("✅ *Password 2FA berhasil ditambahkan!*", {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
@@ -1186,6 +1202,8 @@ bot.on("text", async (ctx) => {
     userStates.delete(userId);
 
     if (result.success) {
+      // Simpan email ke session info
+      sessionManager.updateSessionInfo(state.phone, { email: text });
       return ctx.reply(
         `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${text}\`\n\n_Cek inbox email untuk verifikasi._`,
         {
