@@ -577,19 +577,19 @@ async function addPassword(phone, newPassword, hint = "", email = "") {
 }
 
 /**
- * Update/Set recovery email 2FA - Step 1: Kirim request email
+ * Update/Set recovery email 2FA - Step 1: Trigger kirim kode ke email
  * @param {string} phone - Nomor telepon
  * @param {string} currentPassword - Password 2FA saat ini
  * @param {string} newEmail - Email baru
- * @param {function} emailCodeCallback - Async callback yang return kode email dari user
  * @returns {object} - { success, error }
  */
-async function updateEmail(phone, currentPassword, newEmail, emailCodeCallback) {
+async function updateEmailSendCode(phone, currentPassword, newEmail) {
   const sessionString = loadSession(phone);
   if (!sessionString) return { success: false, error: "Session not found" };
 
+  let client;
   try {
-    const client = new TelegramClient(
+    client = new TelegramClient(
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
@@ -597,26 +597,57 @@ async function updateEmail(phone, currentPassword, newEmail, emailCodeCallback) 
     );
     await client.connect();
 
+    // Ini akan trigger Telegram kirim kode ke email
+    // Akan throw EMAIL_UNCONFIRMED — itu normal (artinya kode sudah dikirim)
     await client.updateTwoFaSettings({
       currentPassword: currentPassword,
-      newPassword: currentPassword, // keep same password
+      newPassword: currentPassword,
       email: newEmail,
-      emailCodeCallback: emailCodeCallback,
-      onEmailCodeError: (err) => {
-        throw new Error("EMAIL_CODE_INVALID");
-      },
+      emailCodeCallback: async () => { throw new Error("NEED_CODE"); },
+      onEmailCodeError: () => { throw new Error("NEED_CODE"); },
     });
 
     await client.disconnect();
     return { success: true };
   } catch (err) {
-    try { await client.disconnect(); } catch (e) {}
-    if (err.message === "EMAIL_CODE_INVALID") {
-      return { success: false, error: "Kode email salah" };
-    }
+    try { if (client) await client.disconnect(); } catch (e) {}
+    // EMAIL_UNCONFIRMED artinya kode sudah dikirim ke email — ini sukses
     if (err.errorMessage && err.errorMessage.includes("EMAIL_UNCONFIRMED")) {
       return { success: true };
     }
+    if (err.message === "NEED_CODE") {
+      return { success: true };
+    }
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Update/Set recovery email 2FA - Step 2: Konfirmasi kode email
+ * @param {string} phone - Nomor telepon
+ * @param {string} code - Kode verifikasi dari email
+ * @returns {object} - { success, error }
+ */
+async function updateEmailConfirmCode(phone, code) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  let client;
+  try {
+    client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
+    );
+    await client.connect();
+
+    await client.invoke(new Api.account.ConfirmPasswordEmail({ code: code }));
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    try { if (client) await client.disconnect(); } catch (e) {}
     return { success: false, error: err.errorMessage || err.message };
   }
 }
@@ -751,7 +782,8 @@ module.exports = {
   changePassword,
   removePassword,
   addPassword,
-  updateEmail,
+  updateEmailSendCode,
+  updateEmailConfirmCode,
   check2FAStatus,
   updateSessionInfo,
   checkSpamLimit,

@@ -1288,35 +1288,41 @@ bot.on("text", async (ctx) => {
       return ctx.reply("❌ Format email tidak valid. Coba lagi:", { parse_mode: "Markdown" });
     }
 
+    await ctx.reply(`⏳ Mengirim kode verifikasi ke \`${text}\`...`, { parse_mode: "Markdown" });
+
+    // Trigger pengiriman kode ke email
+    const sendResult = await sessionManager.updateEmailSendCode(state.phone, state.currentPassword, text);
+
+    if (!sendResult.success) {
+      userStates.delete(userId);
+      return ctx.reply(`❌ Gagal kirim kode:\n\`${sendResult.error}\``, {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_email_${state.phone}`)]]),
+      });
+    }
+
     // Simpan email ke state, lanjut minta kode verifikasi
     userStates.set(userId, { ...state, step: "email_code", newEmail: text });
 
     return ctx.reply(
-      `📧 Email: \`${text}\`\n\n` +
-        `⏳ Telegram mengirim kode verifikasi ke email tersebut.\n` +
+      `✅ Kode verifikasi telah dikirim ke \`${text}\`\n\n` +
         `Cek inbox email kamu, lalu masukkan *kode verifikasi*:`,
       { parse_mode: "Markdown" }
     );
   }
 
-  // Email: step 3 - masukkan kode verifikasi email → panggil updateEmail dengan kode
+  // Email: step 3 - masukkan kode verifikasi email
   if (state.step === "email_code") {
     const code = text.replace(/\s/g, "");
 
     await ctx.reply("⏳ Memverifikasi kode email...");
 
-    const result = await sessionManager.updateEmail(
-      state.phone,
-      state.currentPassword,
-      state.newEmail,
-      async () => code
-    );
-
-    userStates.delete(userId);
+    const result = await sessionManager.updateEmailConfirmCode(state.phone, code);
 
     if (result.success) {
       // Simpan email ke session info
       sessionManager.updateSessionInfo(state.phone, { email: state.newEmail });
+      userStates.delete(userId);
       return ctx.reply(
         `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${state.newEmail}\``,
         {
@@ -1325,9 +1331,11 @@ bot.on("text", async (ctx) => {
         }
       );
     } else {
-      return ctx.reply(`❌ Gagal atur email:\n\`${result.error}\`\n\nCoba masukkan ulang kode:`, {
-        parse_mode: "Markdown",
-      });
+      // Kode salah — JANGAN hapus state, biar bisa coba lagi
+      return ctx.reply(
+        `❌ Kode salah: \`${result.error}\`\n\nCoba masukkan ulang kode verifikasi:`,
+        { parse_mode: "Markdown" }
+      );
     }
   }
 });
