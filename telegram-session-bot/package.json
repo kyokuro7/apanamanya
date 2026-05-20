@@ -5,17 +5,16 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "install-deps": "npm install --production"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   },
   "dependencies": {
     "telegram": "^2.22.2",
-    "gramjs": "^2.22.2",
     "telegraf": "^4.16.3",
     "dotenv": "^16.4.5",
     "input": "^1.0.1",
     "node-fetch": "^2.7.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.4"
   }
 }
