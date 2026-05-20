@@ -214,6 +214,138 @@ async function getAccountInfo(phone) {
   }
 }
 
+/**
+ * Ambil daftar semua sesi aktif dari akun Telegram
+ * @param {string} phone - Nomor telepon
+ * @returns {object} - { success, sessions: [...], currentHash, error }
+ */
+async function getActiveSessions(phone) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    const result = await client.invoke(new Api.account.GetAuthorizations());
+    await client.disconnect();
+
+    const sessions = result.authorizations.map((auth) => ({
+      hash: auth.hash.toString(),
+      isCurrent: auth.flags & 1 ? true : false, // bit 0 = current session
+      deviceModel: auth.deviceModel || "Unknown",
+      platform: auth.platform || "Unknown",
+      systemVersion: auth.systemVersion || "",
+      apiId: auth.apiId,
+      appName: auth.appName || "Unknown",
+      appVersion: auth.appVersion || "",
+      dateCreated: auth.dateCreated,
+      dateActive: auth.dateActive,
+      ip: auth.ip || "Unknown",
+      country: auth.country || "Unknown",
+      region: auth.region || "",
+    }));
+
+    return { success: true, sessions };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Terminate sesi tertentu dari akun Telegram
+ * @param {string} phone - Nomor telepon
+ * @param {string} sessionHash - Hash sesi yang ingin dihapus
+ * @returns {object} - { success, error }
+ */
+async function terminateSession(phone, sessionHash) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    await client.invoke(
+      new Api.account.ResetAuthorization({
+        hash: BigInt(sessionHash),
+      })
+    );
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Terminate semua sesi lain (kecuali sesi bot saat ini)
+ * @param {string} phone - Nomor telepon
+ * @returns {object} - { success, error }
+ */
+async function terminateAllOtherSessions(phone) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    await client.invoke(new Api.auth.ResetAuthorizations());
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Logout sesi bot (keluarkan bot dari akun) dan hapus file session
+ * @param {string} phone - Nomor telepon
+ * @returns {object} - { success, error }
+ */
+async function logoutSession(phone) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    await client.invoke(new Api.auth.LogOut());
+    await client.disconnect();
+
+    // Hapus file session lokal
+    deleteSession(phone);
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
 module.exports = {
   loginStates,
   startLogin,
@@ -224,4 +356,8 @@ module.exports = {
   deleteSession,
   loadSession,
   getAccountInfo,
+  getActiveSessions,
+  terminateSession,
+  terminateAllOtherSessions,
+  logoutSession,
 };

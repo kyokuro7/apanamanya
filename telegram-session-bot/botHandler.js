@@ -27,7 +27,9 @@ bot.start((ctx) => {
       ...Markup.inlineKeyboard([
         [Markup.button.callback("➕ Tambah Akun", "add_account")],
         [Markup.button.callback("📋 Daftar Akun", "list_accounts")],
-        [Markup.button.callback("🗑 Hapus Akun", "delete_account")],
+        [Markup.button.callback("🔍 Cek Session", "check_session")],
+        [Markup.button.callback("🗑 Hapus Session", "manage_session")],
+        [Markup.button.callback("❌ Hapus Akun", "delete_account")],
       ]),
     }
   );
@@ -43,7 +45,9 @@ bot.action("main_menu", (ctx) => {
       ...Markup.inlineKeyboard([
         [Markup.button.callback("➕ Tambah Akun", "add_account")],
         [Markup.button.callback("📋 Daftar Akun", "list_accounts")],
-        [Markup.button.callback("🗑 Hapus Akun", "delete_account")],
+        [Markup.button.callback("🔍 Cek Session", "check_session")],
+        [Markup.button.callback("🗑 Hapus Session", "manage_session")],
+        [Markup.button.callback("❌ Hapus Akun", "delete_account")],
       ]),
     }
   );
@@ -164,6 +168,348 @@ bot.action(/^do_delete_(.+)$/, (ctx) => {
         [Markup.button.callback("◀️ Kembali", "main_menu")],
       ]),
     });
+  }
+});
+
+// ==================== CEK SESSION ====================
+// Pilih akun untuk cek session
+bot.action("check_session", (ctx) => {
+  const sessions = sessionManager.getAllSessions();
+
+  if (sessions.length === 0) {
+    return ctx.editMessageText(
+      "🔍 *Cek Session*\n\nBelum ada akun yang tersimpan.",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("➕ Tambah Akun", "add_account")],
+          [Markup.button.callback("◀️ Kembali", "main_menu")],
+        ]),
+      }
+    );
+  }
+
+  const buttons = sessions.map((s) => {
+    const name = s.info.firstName || s.phone;
+    return [Markup.button.callback(`🔍 ${name} (${s.phone})`, `do_check_session_${s.phone}`)];
+  });
+  buttons.push([Markup.button.callback("◀️ Kembali", "main_menu")]);
+
+  return ctx.editMessageText(
+    "🔍 *Cek Session*\n\nPilih akun untuk melihat sesi aktifnya:",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard(buttons),
+    }
+  );
+});
+
+// Tampilkan daftar sesi aktif dari akun
+bot.action(/^do_check_session_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText(`⏳ Mengambil daftar sesi aktif untuk \`${phone}\`...`, {
+    parse_mode: "Markdown",
+  });
+
+  const result = await sessionManager.getActiveSessions(phone);
+
+  if (!result.success) {
+    return ctx.editMessageText(
+      `❌ Gagal mengambil sesi:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", "check_session")],
+        ]),
+      }
+    );
+  }
+
+  if (result.sessions.length === 0) {
+    return ctx.editMessageText("🔍 Tidak ada sesi aktif ditemukan.", {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("◀️ Kembali", "check_session")],
+      ]),
+    });
+  }
+
+  let text = `🔍 *Sesi Aktif untuk* \`${phone}\`\n`;
+  text += `📊 Total: ${result.sessions.length} sesi\n\n`;
+
+  result.sessions.forEach((s, i) => {
+    const current = s.isCurrent ? " ⭐ (Bot)" : "";
+    const activeDate = new Date(s.dateActive * 1000).toLocaleDateString("id-ID", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    text += `${i + 1}. *${s.appName} ${s.appVersion}*${current}\n`;
+    text += `   📱 ${s.deviceModel} (${s.platform})\n`;
+    text += `   🌐 ${s.ip} - ${s.country}\n`;
+    text += `   🕐 Aktif: ${activeDate}\n\n`;
+  });
+
+  return ctx.editMessageText(text, {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback("◀️ Kembali", "check_session")],
+      [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+    ]),
+  });
+});
+
+// ==================== MANAGE SESSION (HAPUS SESSION) ====================
+// Pilih akun untuk manage session
+bot.action("manage_session", (ctx) => {
+  const sessions = sessionManager.getAllSessions();
+
+  if (sessions.length === 0) {
+    return ctx.editMessageText(
+      "🗑 *Hapus Session*\n\nBelum ada akun yang tersimpan.",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("➕ Tambah Akun", "add_account")],
+          [Markup.button.callback("◀️ Kembali", "main_menu")],
+        ]),
+      }
+    );
+  }
+
+  const buttons = sessions.map((s) => {
+    const name = s.info.firstName || s.phone;
+    return [Markup.button.callback(`⚙️ ${name} (${s.phone})`, `sess_menu_${s.phone}`)];
+  });
+  buttons.push([Markup.button.callback("◀️ Kembali", "main_menu")]);
+
+  return ctx.editMessageText(
+    "🗑 *Hapus Session*\n\nPilih akun yang ingin dikelola sesinya:",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard(buttons),
+    }
+  );
+});
+
+// Menu opsi hapus session per akun
+bot.action(/^sess_menu_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+
+  return ctx.editMessageText(
+    `⚙️ *Kelola Session*\n\n📞 Akun: \`${phone}\`\n\nPilih aksi:`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("💥 All Session (Hapus Semua Kecuali Bot)", `sess_all_${phone}`)],
+        [Markup.button.callback("☝️ One Session (Hapus Satu Sesi)", `sess_one_${phone}`)],
+        [Markup.button.callback("🚪 Out Session (Keluarkan Bot)", `sess_out_${phone}`)],
+        [Markup.button.callback("◀️ Kembali", "manage_session")],
+      ]),
+    }
+  );
+});
+
+// ---------- ALL SESSION: Hapus semua sesi kecuali bot ----------
+bot.action(/^sess_all_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+
+  return ctx.editMessageText(
+    `⚠️ *Hapus Semua Session*\n\n` +
+      `Akun: \`${phone}\`\n\n` +
+      `Ini akan menghapus *SEMUA sesi* akun ini kecuali sesi bot.\n` +
+      `Semua device lain akan ter-logout.\n\n` +
+      `Yakin?`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("✅ Ya, Hapus Semua", `do_sess_all_${phone}`)],
+        [Markup.button.callback("❌ Batal", `sess_menu_${phone}`)],
+      ]),
+    }
+  );
+});
+
+bot.action(/^do_sess_all_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText(`⏳ Menghapus semua sesi lain untuk \`${phone}\`...`, {
+    parse_mode: "Markdown",
+  });
+
+  const result = await sessionManager.terminateAllOtherSessions(phone);
+
+  if (result.success) {
+    return ctx.editMessageText(
+      `✅ *Berhasil!*\n\nSemua sesi lain untuk \`${phone}\` telah dihapus.\nHanya sesi bot yang tersisa.`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)],
+          [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+        ]),
+      }
+    );
+  } else {
+    return ctx.editMessageText(
+      `❌ Gagal menghapus sesi:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)],
+        ]),
+      }
+    );
+  }
+});
+
+// ---------- ONE SESSION: Pilih sesi tertentu untuk dihapus ----------
+bot.action(/^sess_one_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText(`⏳ Mengambil daftar sesi untuk \`${phone}\`...`, {
+    parse_mode: "Markdown",
+  });
+
+  const result = await sessionManager.getActiveSessions(phone);
+
+  if (!result.success) {
+    return ctx.editMessageText(
+      `❌ Gagal mengambil sesi:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)],
+        ]),
+      }
+    );
+  }
+
+  // Filter: hanya tampilkan sesi yang bukan current (bukan sesi bot)
+  const otherSessions = result.sessions.filter((s) => !s.isCurrent);
+
+  if (otherSessions.length === 0) {
+    return ctx.editMessageText(
+      "☝️ *Hapus Satu Sesi*\n\nTidak ada sesi lain selain sesi bot.",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)],
+        ]),
+      }
+    );
+  }
+
+  const buttons = otherSessions.map((s) => {
+    const label = `${s.appName} - ${s.deviceModel} (${s.ip})`;
+    return [Markup.button.callback(`🗑 ${label}`, `do_sess_one_${phone}_${s.hash}`)];
+  });
+  buttons.push([Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)]);
+
+  let text = `☝️ *Pilih sesi yang ingin dihapus:*\n\nAkun: \`${phone}\`\n\n`;
+  otherSessions.forEach((s, i) => {
+    const activeDate = new Date(s.dateActive * 1000).toLocaleDateString("id-ID", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+    text += `${i + 1}. ${s.appName} - ${s.deviceModel}\n   🌐 ${s.ip} | 🕐 ${activeDate}\n\n`;
+  });
+
+  return ctx.editMessageText(text, {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard(buttons),
+  });
+});
+
+// Eksekusi hapus satu sesi
+bot.action(/^do_sess_one_(.+)_(\d+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+  const hash = ctx.match[2];
+
+  await ctx.editMessageText(`⏳ Menghapus sesi...`, { parse_mode: "Markdown" });
+
+  const result = await sessionManager.terminateSession(phone, hash);
+
+  if (result.success) {
+    return ctx.editMessageText(
+      `✅ Sesi berhasil dihapus!`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("☝️ Hapus Sesi Lain", `sess_one_${phone}`)],
+          [Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)],
+        ]),
+      }
+    );
+  } else {
+    return ctx.editMessageText(
+      `❌ Gagal menghapus sesi:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)],
+        ]),
+      }
+    );
+  }
+});
+
+// ---------- OUT SESSION: Keluarkan bot dari sesi (logout) ----------
+bot.action(/^sess_out_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+
+  return ctx.editMessageText(
+    `🚪 *Out Session (Logout Bot)*\n\n` +
+      `Akun: \`${phone}\`\n\n` +
+      `⚠️ Ini akan *mengeluarkan bot* dari akun ini.\n` +
+      `Sesi akan dihapus dari Telegram dan dari bot.\n` +
+      `Kamu perlu login ulang jika ingin menambahkan kembali.\n\n` +
+      `Yakin?`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("✅ Ya, Logout", `do_sess_out_${phone}`)],
+        [Markup.button.callback("❌ Batal", `sess_menu_${phone}`)],
+      ]),
+    }
+  );
+});
+
+bot.action(/^do_sess_out_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText(`⏳ Logout dari \`${phone}\`...`, {
+    parse_mode: "Markdown",
+  });
+
+  const result = await sessionManager.logoutSession(phone);
+
+  if (result.success) {
+    return ctx.editMessageText(
+      `✅ *Berhasil logout!*\n\n` +
+        `Akun \`${phone}\` telah dikeluarkan dari bot.\n` +
+        `File sesi telah dihapus.`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+        ]),
+      }
+    );
+  } else {
+    return ctx.editMessageText(
+      `❌ Gagal logout:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("◀️ Kembali", `sess_menu_${phone}`)],
+        ]),
+      }
+    );
   }
 });
 
