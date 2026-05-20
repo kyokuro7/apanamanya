@@ -463,6 +463,176 @@ async function restoreBackup(backupData) {
   return { success: true, restored, failed };
 }
 
+/**
+ * Ubah password 2FA akun
+ * @param {string} phone - Nomor telepon
+ * @param {string} currentPassword - Password lama
+ * @param {string} newPassword - Password baru
+ * @param {string} hint - Hint password (opsional)
+ * @returns {object} - { success, error }
+ */
+async function changePassword(phone, currentPassword, newPassword, hint = "") {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    // Update password menggunakan client helper
+    await client.updateTwoFaSettings({
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+      hint: hint || "",
+    });
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Hapus password 2FA akun
+ * @param {string} phone - Nomor telepon
+ * @param {string} currentPassword - Password saat ini
+ * @returns {object} - { success, error }
+ */
+async function removePassword(phone, currentPassword) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    await client.updateTwoFaSettings({
+      currentPassword: currentPassword,
+      newPassword: null,
+    });
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Tambah password 2FA baru (akun yang belum punya 2FA)
+ * @param {string} phone - Nomor telepon
+ * @param {string} newPassword - Password baru
+ * @param {string} hint - Hint password
+ * @param {string} email - Recovery email (opsional)
+ * @returns {object} - { success, error }
+ */
+async function addPassword(phone, newPassword, hint = "", email = "") {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    const params = {
+      newPassword: newPassword,
+      hint: hint || "",
+    };
+    if (email) {
+      params.email = email;
+    }
+
+    await client.updateTwoFaSettings(params);
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Update/Set recovery email 2FA
+ * @param {string} phone - Nomor telepon
+ * @param {string} currentPassword - Password 2FA saat ini
+ * @param {string} newEmail - Email baru
+ * @returns {object} - { success, error }
+ */
+async function updateEmail(phone, currentPassword, newEmail) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    await client.updateTwoFaSettings({
+      currentPassword: currentPassword,
+      newPassword: currentPassword, // keep same password
+      email: newEmail,
+    });
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Cek status 2FA akun (ada password atau tidak, ada email atau tidak)
+ * @param {string} phone - Nomor telepon
+ * @returns {object} - { success, hasPassword, hint, hasRecoveryEmail, emailPattern, error }
+ */
+async function check2FAStatus(phone) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    const passwordInfo = await client.invoke(new Api.account.GetPassword());
+    await client.disconnect();
+
+    return {
+      success: true,
+      hasPassword: passwordInfo.hasPassword || false,
+      hint: passwordInfo.hint || "",
+      hasRecoveryEmail: passwordInfo.hasRecovery || false,
+      emailPattern: passwordInfo.emailUnconfirmedPattern || "",
+    };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
 module.exports = {
   loginStates,
   startLogin,
@@ -479,4 +649,9 @@ module.exports = {
   logoutSession,
   createBackup,
   restoreBackup,
+  changePassword,
+  removePassword,
+  addPassword,
+  updateEmail,
+  check2FAStatus,
 };

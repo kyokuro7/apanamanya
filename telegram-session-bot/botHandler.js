@@ -89,23 +89,210 @@ bot.action("list_accounts", async (ctx) => {
   }
 
   let text = "📋 *Daftar Akun Tersimpan:*\n\n";
+  const buttons = [];
+
   sessions.forEach((s, i) => {
     const name = s.info.firstName
       ? `${s.info.firstName} ${s.info.lastName || ""}`.trim()
       : "Unknown";
+    const id = s.info.id || "-";
     const username = s.info.username ? `@${s.info.username}` : "-";
-    text += `${i + 1}. *${name}*\n`;
-    text += `   📞 \`${s.phone}\`\n`;
-    text += `   👤 ${username}\n`;
-    text += `   📅 ${new Date(s.createdAt).toLocaleDateString("id-ID")}\n\n`;
+    text += `${i + 1}. *${name}* | ID: \`${id}\`\n`;
+    text += `   📞 \`${s.phone}\` | 👤 ${username}\n\n`;
+
+    // Button per akun dengan ID
+    const btnLabel = `🆔 ${id} - ${name}`;
+    buttons.push([Markup.button.callback(btnLabel, `acc_manage_${s.phone}`)]);
   });
+
+  buttons.push([Markup.button.callback("◀️ Kembali", "main_menu")]);
+
+  return ctx.editMessageText(text + "\n_Tekan akun untuk mengelola:_", {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard(buttons),
+  });
+});
+
+// ==================== KELOLA AKUN (per akun) ====================
+bot.action(/^acc_manage_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+  const sessions = sessionManager.getAllSessions();
+  const account = sessions.find((s) => s.phone === phone);
+
+  if (!account) {
+    return ctx.editMessageText("❌ Akun tidak ditemukan.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "list_accounts")]]),
+    });
+  }
+
+  const name = account.info.firstName
+    ? `${account.info.firstName} ${account.info.lastName || ""}`.trim()
+    : "Unknown";
+  const id = account.info.id || "-";
+  const username = account.info.username ? `@${account.info.username}` : "-";
+
+  return ctx.editMessageText(
+    `⚙️ *Kelola Akun*\n\n` +
+      `🆔 ID: \`${id}\`\n` +
+      `👤 Nama: *${name}*\n` +
+      `📞 Nomor: \`${phone}\`\n` +
+      `🔗 Username: ${username}\n\n` +
+      `Pilih aksi:`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("🔐 Kelola Password 2FA", `acc_2fa_${phone}`)],
+        [Markup.button.callback("📧 Kelola Email Recovery", `acc_email_${phone}`)],
+        [Markup.button.callback("◀️ Kembali", "list_accounts")],
+      ]),
+    }
+  );
+});
+
+// ==================== KELOLA PASSWORD 2FA ====================
+bot.action(/^acc_2fa_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText("⏳ Mengecek status 2FA...", { parse_mode: "Markdown" });
+
+  const status = await sessionManager.check2FAStatus(phone);
+
+  if (!status.success) {
+    return ctx.editMessageText(
+      `❌ Gagal cek status 2FA:\n\`${status.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)]]),
+      }
+    );
+  }
+
+  let text = `🔐 *Password 2FA*\n\n📞 Akun: \`${phone}\`\n\n`;
+  text += `Status: ${status.hasPassword ? "✅ Aktif" : "❌ Tidak Aktif"}\n`;
+  if (status.hasPassword && status.hint) {
+    text += `Hint: \`${status.hint}\`\n`;
+  }
+  if (status.hasRecoveryEmail) {
+    text += `Email: ✅ Tersedia\n`;
+  }
+  text += `\nPilih aksi:`;
+
+  const buttons = [];
+  if (status.hasPassword) {
+    buttons.push([Markup.button.callback("🔄 Ganti Password", `acc_pw_change_${phone}`)]);
+    buttons.push([Markup.button.callback("🗑 Hapus Password", `acc_pw_remove_${phone}`)]);
+  } else {
+    buttons.push([Markup.button.callback("➕ Tambah Password", `acc_pw_add_${phone}`)]);
+  }
+  buttons.push([Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)]);
+
+  return ctx.editMessageText(text, {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard(buttons),
+  });
+});
+
+// --- Ganti Password ---
+bot.action(/^acc_pw_change_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+  userStates.set(ctx.from.id, { step: "pw_change_old", phone });
+
+  return ctx.editMessageText(
+    `🔄 *Ganti Password 2FA*\n\n📞 Akun: \`${phone}\`\n\nMasukkan password *lama*:`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([[Markup.button.callback("❌ Batal", `acc_2fa_${phone}`)]]),
+    }
+  );
+});
+
+// --- Hapus Password ---
+bot.action(/^acc_pw_remove_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+  userStates.set(ctx.from.id, { step: "pw_remove", phone });
+
+  return ctx.editMessageText(
+    `🗑 *Hapus Password 2FA*\n\n📞 Akun: \`${phone}\`\n\n⚠️ Masukkan password saat ini untuk konfirmasi:`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([[Markup.button.callback("❌ Batal", `acc_2fa_${phone}`)]]),
+    }
+  );
+});
+
+// --- Tambah Password ---
+bot.action(/^acc_pw_add_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+  userStates.set(ctx.from.id, { step: "pw_add_new", phone });
+
+  return ctx.editMessageText(
+    `➕ *Tambah Password 2FA*\n\n📞 Akun: \`${phone}\`\n\nMasukkan password baru:`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([[Markup.button.callback("❌ Batal", `acc_2fa_${phone}`)]]),
+    }
+  );
+});
+
+// ==================== KELOLA EMAIL ====================
+bot.action(/^acc_email_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText("⏳ Mengecek status email...", { parse_mode: "Markdown" });
+
+  const status = await sessionManager.check2FAStatus(phone);
+
+  if (!status.success) {
+    return ctx.editMessageText(
+      `❌ Gagal cek status:\n\`${status.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)]]),
+      }
+    );
+  }
+
+  if (!status.hasPassword) {
+    return ctx.editMessageText(
+      `📧 *Email Recovery*\n\n📞 Akun: \`${phone}\`\n\n` +
+        `⚠️ Akun ini belum punya password 2FA.\n` +
+        `Tambahkan password 2FA terlebih dahulu sebelum bisa mengatur email.`,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("➕ Tambah Password", `acc_pw_add_${phone}`)],
+          [Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)],
+        ]),
+      }
+    );
+  }
+
+  let text = `📧 *Email Recovery*\n\n📞 Akun: \`${phone}\`\n\n`;
+  text += `Status: ${status.hasRecoveryEmail ? "✅ Sudah diatur" : "❌ Belum diatur"}\n`;
+  text += `\nTekan tombol di bawah untuk mengatur email recovery.\n`;
+  text += `_Kamu perlu memasukkan password 2FA untuk mengubah email._`;
 
   return ctx.editMessageText(text, {
     parse_mode: "Markdown",
     ...Markup.inlineKeyboard([
-      [Markup.button.callback("◀️ Kembali", "main_menu")],
+      [Markup.button.callback("📧 Tambah/Ubah Email", `acc_email_set_${phone}`)],
+      [Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)],
     ]),
   });
+});
+
+// --- Set Email ---
+bot.action(/^acc_email_set_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+  userStates.set(ctx.from.id, { step: "email_pw", phone });
+
+  return ctx.editMessageText(
+    `📧 *Ubah Email Recovery*\n\n📞 Akun: \`${phone}\`\n\nMasukkan password 2FA kamu:`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([[Markup.button.callback("❌ Batal", `acc_email_${phone}`)]]),
+    }
+  );
 });
 
 // ==================== HAPUS AKUN ====================
@@ -797,9 +984,10 @@ bot.on("text", async (ctx) => {
 
         return ctx.reply(
           "✅ *Akun berhasil ditambahkan!*\n\n" +
+            `🆔 ID: \`${info.id || "-"}\`\n` +
             `📞 Nomor: \`${state.phone}\`\n` +
             `👤 Nama: ${info.firstName || "-"} ${info.lastName || ""}\n` +
-            `🆔 Username: ${info.username ? "@" + info.username : "-"}`,
+            `🔗 Username: ${info.username ? "@" + info.username : "-"}`,
           {
             parse_mode: "Markdown",
             ...Markup.inlineKeyboard([
@@ -845,9 +1033,7 @@ bot.on("text", async (ctx) => {
     // Hapus pesan password user untuk keamanan
     try {
       await ctx.deleteMessage(ctx.message.message_id);
-    } catch (e) {
-      // Mungkin bot tidak punya permission hapus pesan
-    }
+    } catch (e) {}
 
     try {
       const result = await sessionManager.verifyPassword(state, text);
@@ -861,9 +1047,10 @@ bot.on("text", async (ctx) => {
 
         return ctx.reply(
           "✅ *Akun berhasil ditambahkan!*\n\n" +
+            `🆔 ID: \`${info.id || "-"}\`\n` +
             `📞 Nomor: \`${state.phone}\`\n` +
             `👤 Nama: ${info.firstName || "-"} ${info.lastName || ""}\n` +
-            `🆔 Username: ${info.username ? "@" + info.username : "-"}`,
+            `🔗 Username: ${info.username ? "@" + info.username : "-"}`,
           {
             parse_mode: "Markdown",
             ...Markup.inlineKeyboard([
@@ -882,6 +1069,135 @@ bot.on("text", async (ctx) => {
         `❌ Error: \`${err.message}\`\n\nCoba masukkan ulang password:`,
         { parse_mode: "Markdown" }
       );
+    }
+  }
+
+  // ---------- PASSWORD MANAGEMENT FLOWS ----------
+
+  // Ganti password: step 1 - masukkan password lama
+  if (state.step === "pw_change_old") {
+    try { await ctx.deleteMessage(ctx.message.message_id); } catch (e) {}
+    userStates.set(userId, { ...state, step: "pw_change_new", oldPassword: text });
+    return ctx.reply("Masukkan password *baru*:", { parse_mode: "Markdown" });
+  }
+
+  // Ganti password: step 2 - masukkan password baru
+  if (state.step === "pw_change_new") {
+    try { await ctx.deleteMessage(ctx.message.message_id); } catch (e) {}
+    userStates.set(userId, { ...state, step: "pw_change_hint", newPassword: text });
+    return ctx.reply(
+      "Masukkan *hint* password (atau ketik `-` untuk skip):",
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  // Ganti password: step 3 - hint
+  if (state.step === "pw_change_hint") {
+    const hint = text === "-" ? "" : text;
+    await ctx.reply("⏳ Mengubah password 2FA...");
+
+    const result = await sessionManager.changePassword(state.phone, state.oldPassword, state.newPassword, hint);
+    userStates.delete(userId);
+
+    if (result.success) {
+      return ctx.reply("✅ *Password 2FA berhasil diubah!*", {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
+      });
+    } else {
+      return ctx.reply(`❌ Gagal ubah password:\n\`${result.error}\``, {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
+      });
+    }
+  }
+
+  // Hapus password: masukkan password untuk konfirmasi
+  if (state.step === "pw_remove") {
+    try { await ctx.deleteMessage(ctx.message.message_id); } catch (e) {}
+    await ctx.reply("⏳ Menghapus password 2FA...");
+
+    const result = await sessionManager.removePassword(state.phone, text);
+    userStates.delete(userId);
+
+    if (result.success) {
+      return ctx.reply("✅ *Password 2FA berhasil dihapus!*", {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
+      });
+    } else {
+      return ctx.reply(`❌ Gagal hapus password:\n\`${result.error}\``, {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
+      });
+    }
+  }
+
+  // Tambah password: step 1 - password baru
+  if (state.step === "pw_add_new") {
+    try { await ctx.deleteMessage(ctx.message.message_id); } catch (e) {}
+    userStates.set(userId, { ...state, step: "pw_add_hint", newPassword: text });
+    return ctx.reply(
+      "Masukkan *hint* password (atau ketik `-` untuk skip):",
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  // Tambah password: step 2 - hint
+  if (state.step === "pw_add_hint") {
+    const hint = text === "-" ? "" : text;
+    await ctx.reply("⏳ Menambahkan password 2FA...");
+
+    const result = await sessionManager.addPassword(state.phone, state.newPassword, hint);
+    userStates.delete(userId);
+
+    if (result.success) {
+      return ctx.reply("✅ *Password 2FA berhasil ditambahkan!*", {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
+      });
+    } else {
+      return ctx.reply(`❌ Gagal tambah password:\n\`${result.error}\``, {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_2fa_${state.phone}`)]]),
+      });
+    }
+  }
+
+  // ---------- EMAIL MANAGEMENT FLOWS ----------
+
+  // Email: step 1 - masukkan password 2FA
+  if (state.step === "email_pw") {
+    try { await ctx.deleteMessage(ctx.message.message_id); } catch (e) {}
+    userStates.set(userId, { ...state, step: "email_new", currentPassword: text });
+    return ctx.reply("Masukkan *email baru* untuk recovery:", { parse_mode: "Markdown" });
+  }
+
+  // Email: step 2 - masukkan email baru
+  if (state.step === "email_new") {
+    // Validasi format email sederhana
+    if (!text.includes("@") || !text.includes(".")) {
+      return ctx.reply("❌ Format email tidak valid. Coba lagi:", { parse_mode: "Markdown" });
+    }
+
+    await ctx.reply("⏳ Mengatur email recovery...");
+
+    const result = await sessionManager.updateEmail(state.phone, state.currentPassword, text);
+    userStates.delete(userId);
+
+    if (result.success) {
+      return ctx.reply(
+        `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${text}\`\n\n_Cek inbox email untuk verifikasi._`,
+        {
+          parse_mode: "Markdown",
+          ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_email_${state.phone}`)]]),
+        }
+      );
+    } else {
+      return ctx.reply(`❌ Gagal atur email:\n\`${result.error}\``, {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_email_${state.phone}`)]]),
+      });
     }
   }
 });
