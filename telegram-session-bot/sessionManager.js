@@ -1,6 +1,7 @@
 const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const { Api } = require("telegram");
+const { computeCheck } = require("telegram/Password");
 const fs = require("fs");
 const path = require("path");
 const config = require("./config");
@@ -77,7 +78,7 @@ async function verifyPassword(state, password) {
 
     const result = await state.client.invoke(
       new Api.auth.CheckPassword({
-        password: await state.client._computeCheck(passwordInfo, password),
+        password: await computeCheck(passwordInfo, password),
       })
     );
 
