@@ -248,7 +248,7 @@ bot.action(/^acc_pw_add_(.+)$/, (ctx) => {
 });
 
 // ==================== KELOLA EMAIL ====================
-bot.action(/^acc_email_(.+)$/, async (ctx) => {
+bot.action(/^acc_email_(?!set_)(.+)$/, async (ctx) => {
   const phone = ctx.match[1];
 
   await ctx.editMessageText("⏳ Mengecek status email...", { parse_mode: "Markdown" });
