@@ -27,6 +27,7 @@ bot.start((ctx) => {
       ...Markup.inlineKeyboard([
         [Markup.button.callback("➕ Tambah Akun", "add_account")],
         [Markup.button.callback("📋 Daftar Akun", "list_accounts")],
+        [Markup.button.callback("📢 Broadcast", "broadcast_menu")],
         [Markup.button.callback("🔍 Cek Session", "check_session")],
         [Markup.button.callback("🗑 Hapus Session", "manage_session")],
         [Markup.button.callback("💾 Backup & Pulihkan", "backup_restore")],
@@ -46,6 +47,7 @@ bot.action("main_menu", (ctx) => {
       ...Markup.inlineKeyboard([
         [Markup.button.callback("➕ Tambah Akun", "add_account")],
         [Markup.button.callback("📋 Daftar Akun", "list_accounts")],
+        [Markup.button.callback("📢 Broadcast", "broadcast_menu")],
         [Markup.button.callback("🔍 Cek Session", "check_session")],
         [Markup.button.callback("🗑 Hapus Session", "manage_session")],
         [Markup.button.callback("💾 Backup & Pulihkan", "backup_restore")],
@@ -367,6 +369,494 @@ bot.action(/^set_limit_yes_(.+)$/, (ctx) => {
     parse_mode: "Markdown",
     ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)]]),
   });
+});
+
+// ==================== BROADCAST ====================
+bot.action("broadcast_menu", (ctx) => {
+  const sessions = sessionManager.getAllSessions();
+
+  if (sessions.length === 0) {
+    return ctx.editMessageText(
+      "📢 *Broadcast*\n\nBelum ada akun yang tersimpan.\nTambahkan akun terlebih dahulu.",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("➕ Tambah Akun", "add_account")],
+          [Markup.button.callback("◀️ Kembali", "main_menu")],
+        ]),
+      }
+    );
+  }
+
+  return ctx.editMessageText(
+    "📢 *Broadcast Menu*\n\n" +
+      `📊 Total akun tersedia: *${sessions.length}*\n\n` +
+      "Pilih mode broadcast:",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("📨 Kirim Pesan (Semua Akun)", "bc_all_text")],
+        [Markup.button.callback("☝️ Kirim Pesan (Pilih Akun)", "bc_select_text")],
+        [Markup.button.callback("🔀 Forward Pesan (Semua Akun)", "bc_all_forward")],
+        [Markup.button.callback("⚙️ Pengaturan Delay", "bc_settings")],
+        [Markup.button.callback("◀️ Kembali", "main_menu")],
+      ]),
+    }
+  );
+});
+
+// --- Broadcast Settings (Delay) ---
+bot.action("bc_settings", (ctx) => {
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+  const currentDelay = (state && state.broadcastDelay) || 3000;
+
+  return ctx.editMessageText(
+    `⚙️ *Pengaturan Broadcast*\n\n` +
+      `⏱ Delay saat ini: *${currentDelay / 1000} detik*\n\n` +
+      `Delay adalah jeda antar pengiriman pesan untuk menghindari flood limit.\n\n` +
+      `Pilih delay:`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback("1 dtk", "bc_delay_1000"),
+          Markup.button.callback("2 dtk", "bc_delay_2000"),
+          Markup.button.callback("3 dtk", "bc_delay_3000"),
+        ],
+        [
+          Markup.button.callback("5 dtk", "bc_delay_5000"),
+          Markup.button.callback("7 dtk", "bc_delay_7000"),
+          Markup.button.callback("10 dtk", "bc_delay_10000"),
+        ],
+        [Markup.button.callback("✏️ Custom (ketik sendiri)", "bc_delay_custom")],
+        [Markup.button.callback("◀️ Kembali", "broadcast_menu")],
+      ]),
+    }
+  );
+});
+
+// Set delay dari button
+bot.action(/^bc_delay_(\d+)$/, (ctx) => {
+  const delay = parseInt(ctx.match[1]);
+  const userId = ctx.from.id;
+  const state = userStates.get(userId) || {};
+  userStates.set(userId, { ...state, broadcastDelay: delay });
+
+  return ctx.editMessageText(
+    `✅ Delay broadcast diatur ke *${delay / 1000} detik*`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("◀️ Kembali", "bc_settings")],
+        [Markup.button.callback("◀️ Broadcast Menu", "broadcast_menu")],
+      ]),
+    }
+  );
+});
+
+// Custom delay
+bot.action("bc_delay_custom", (ctx) => {
+  userStates.set(ctx.from.id, { step: "bc_custom_delay" });
+  return ctx.editMessageText(
+    "⏱ *Custom Delay*\n\nMasukkan delay dalam *detik* (angka):\n\n_Contoh: `5` untuk 5 detik_",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Batal", "bc_settings")],
+      ]),
+    }
+  );
+});
+
+// --- BROADCAST: Kirim Pesan ke Semua Akun ---
+bot.action("bc_all_text", (ctx) => {
+  const sessions = sessionManager.getAllSessions();
+  if (sessions.length === 0) {
+    return ctx.editMessageText("❌ Tidak ada akun tersimpan.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  userStates.set(ctx.from.id, {
+    step: "bc_target",
+    mode: "all_text",
+    phones: sessions.map((s) => s.phone),
+  });
+
+  return ctx.editMessageText(
+    "📨 *Broadcast ke Semua Akun*\n\n" +
+      `📊 Akun yang akan digunakan: *${sessions.length}*\n\n` +
+      "Masukkan *target* tujuan pesan:\n" +
+      "- Username: `@username`\n" +
+      "- Group/Channel: `@groupname`\n" +
+      "- User ID: `123456789`\n" +
+      "- Invite Link: `https://t.me/+xxxxx`",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Batal", "broadcast_menu")],
+      ]),
+    }
+  );
+});
+
+// --- BROADCAST: Pilih Akun ---
+bot.action("bc_select_text", (ctx) => {
+  const sessions = sessionManager.getAllSessions();
+  if (sessions.length === 0) {
+    return ctx.editMessageText("❌ Tidak ada akun tersimpan.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  // Inisialisasi state pemilihan akun
+  const userId = ctx.from.id;
+  const prevState = userStates.get(userId) || {};
+  userStates.set(userId, {
+    ...prevState,
+    step: "bc_selecting_accounts",
+    mode: "select_text",
+    selectedPhones: [],
+    availablePhones: sessions.map((s) => ({ phone: s.phone, name: s.info.firstName || s.phone })),
+  });
+
+  const buttons = sessions.map((s) => {
+    const name = s.info.firstName
+      ? `${s.info.firstName} ${s.info.lastName || ""}`.trim()
+      : s.phone;
+    return [Markup.button.callback(`⬜ ${name} (${s.phone})`, `bc_toggle_${s.phone}`)];
+  });
+
+  buttons.push([Markup.button.callback("✅ Pilih Semua", "bc_select_all")]);
+  buttons.push([Markup.button.callback("📨 Lanjut Kirim", "bc_select_done")]);
+  buttons.push([Markup.button.callback("❌ Batal", "broadcast_menu")]);
+
+  return ctx.editMessageText(
+    "☝️ *Pilih Akun untuk Broadcast*\n\n" +
+      "Tap akun untuk memilih/batal pilih.\n" +
+      "Tekan *Lanjut Kirim* setelah selesai memilih.\n\n" +
+      `_Dipilih: 0 dari ${sessions.length}_`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard(buttons),
+    }
+  );
+});
+
+// Toggle pilih akun
+bot.action(/^bc_toggle_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+
+  if (!state || state.step !== "bc_selecting_accounts") {
+    return ctx.editMessageText("❌ Sesi berakhir. Silakan mulai ulang.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  // Toggle phone dalam selectedPhones
+  const idx = state.selectedPhones.indexOf(phone);
+  if (idx > -1) {
+    state.selectedPhones.splice(idx, 1);
+  } else {
+    state.selectedPhones.push(phone);
+  }
+  userStates.set(userId, state);
+
+  // Re-render buttons
+  const sessions = sessionManager.getAllSessions();
+  const buttons = sessions.map((s) => {
+    const name = s.info.firstName
+      ? `${s.info.firstName} ${s.info.lastName || ""}`.trim()
+      : s.phone;
+    const selected = state.selectedPhones.includes(s.phone) ? "✅" : "⬜";
+    return [Markup.button.callback(`${selected} ${name} (${s.phone})`, `bc_toggle_${s.phone}`)];
+  });
+
+  buttons.push([Markup.button.callback("✅ Pilih Semua", "bc_select_all")]);
+  buttons.push([Markup.button.callback("📨 Lanjut Kirim", "bc_select_done")]);
+  buttons.push([Markup.button.callback("❌ Batal", "broadcast_menu")]);
+
+  return ctx.editMessageText(
+    "☝️ *Pilih Akun untuk Broadcast*\n\n" +
+      "Tap akun untuk memilih/batal pilih.\n" +
+      "Tekan *Lanjut Kirim* setelah selesai memilih.\n\n" +
+      `_Dipilih: ${state.selectedPhones.length} dari ${sessions.length}_`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard(buttons),
+    }
+  );
+});
+
+// Pilih semua akun
+bot.action("bc_select_all", (ctx) => {
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+
+  if (!state || state.step !== "bc_selecting_accounts") {
+    return ctx.editMessageText("❌ Sesi berakhir.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  const sessions = sessionManager.getAllSessions();
+
+  // Jika sudah semua terpilih, deselect semua. Jika belum, pilih semua.
+  if (state.selectedPhones.length === sessions.length) {
+    state.selectedPhones = [];
+  } else {
+    state.selectedPhones = sessions.map((s) => s.phone);
+  }
+  userStates.set(userId, state);
+
+  const buttons = sessions.map((s) => {
+    const name = s.info.firstName
+      ? `${s.info.firstName} ${s.info.lastName || ""}`.trim()
+      : s.phone;
+    const selected = state.selectedPhones.includes(s.phone) ? "✅" : "⬜";
+    return [Markup.button.callback(`${selected} ${name} (${s.phone})`, `bc_toggle_${s.phone}`)];
+  });
+
+  buttons.push([Markup.button.callback("✅ Pilih Semua", "bc_select_all")]);
+  buttons.push([Markup.button.callback("📨 Lanjut Kirim", "bc_select_done")]);
+  buttons.push([Markup.button.callback("❌ Batal", "broadcast_menu")]);
+
+  return ctx.editMessageText(
+    "☝️ *Pilih Akun untuk Broadcast*\n\n" +
+      "Tap akun untuk memilih/batal pilih.\n" +
+      "Tekan *Lanjut Kirim* setelah selesai memilih.\n\n" +
+      `_Dipilih: ${state.selectedPhones.length} dari ${sessions.length}_`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard(buttons),
+    }
+  );
+});
+
+// Selesai pilih akun, lanjut masukkan target
+bot.action("bc_select_done", (ctx) => {
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+
+  if (!state || state.step !== "bc_selecting_accounts") {
+    return ctx.editMessageText("❌ Sesi berakhir.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  if (state.selectedPhones.length === 0) {
+    return ctx.answerCbQuery("⚠️ Pilih minimal 1 akun!", { show_alert: true });
+  }
+
+  // Lanjut ke input target
+  userStates.set(userId, {
+    ...state,
+    step: "bc_target",
+    phones: state.selectedPhones,
+  });
+
+  return ctx.editMessageText(
+    "📨 *Broadcast (Akun Terpilih)*\n\n" +
+      `📊 Akun yang akan digunakan: *${state.selectedPhones.length}*\n\n` +
+      "Masukkan *target* tujuan pesan:\n" +
+      "- Username: `@username`\n" +
+      "- Group/Channel: `@groupname`\n" +
+      "- User ID: `123456789`\n" +
+      "- Invite Link: `https://t.me/+xxxxx`",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Batal", "broadcast_menu")],
+      ]),
+    }
+  );
+});
+
+// --- BROADCAST: Forward Pesan ke Semua Akun ---
+bot.action("bc_all_forward", (ctx) => {
+  const sessions = sessionManager.getAllSessions();
+  if (sessions.length === 0) {
+    return ctx.editMessageText("❌ Tidak ada akun tersimpan.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  userStates.set(ctx.from.id, {
+    step: "bc_forward_target",
+    mode: "all_forward",
+    phones: sessions.map((s) => s.phone),
+  });
+
+  return ctx.editMessageText(
+    "🔀 *Forward Broadcast (Semua Akun)*\n\n" +
+      `📊 Akun yang akan digunakan: *${sessions.length}*\n\n` +
+      "Masukkan *target* tujuan forward:\n" +
+      "- Username: `@username`\n" +
+      "- Group/Channel: `@groupname`\n" +
+      "- User ID: `123456789`",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Batal", "broadcast_menu")],
+      ]),
+    }
+  );
+});
+
+// --- Broadcast Confirm & Execute ---
+bot.action("bc_confirm_send", async (ctx) => {
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+
+  if (!state || !state.phones || !state.target || !state.message) {
+    return ctx.editMessageText("❌ Data broadcast tidak lengkap.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  const delay = state.broadcastDelay || 3000;
+  const totalAccounts = state.phones.length;
+
+  await ctx.editMessageText(
+    `⏳ *Broadcast dimulai...*\n\n` +
+      `📊 Target: \`${state.target}\`\n` +
+      `📨 Akun: ${totalAccounts}\n` +
+      `⏱ Delay: ${delay / 1000} detik\n\n` +
+      `_Mengirim pesan..._`,
+    { parse_mode: "Markdown" }
+  );
+
+  const result = await sessionManager.broadcastToTarget(
+    state.phones,
+    state.target,
+    state.message,
+    delay
+  );
+
+  // Format hasil
+  const successCount = result.results.filter((r) => r.success).length;
+  const failCount = result.results.filter((r) => !r.success).length;
+
+  let text = `📢 *Hasil Broadcast*\n\n`;
+  text += `🎯 Target: \`${state.target}\`\n`;
+  text += `✅ Berhasil: *${successCount}*\n`;
+  text += `❌ Gagal: *${failCount}*\n\n`;
+
+  if (failCount > 0) {
+    text += `*Detail gagal:*\n`;
+    result.results
+      .filter((r) => !r.success)
+      .forEach((r) => {
+        text += `- \`${r.phone}\`: ${r.error}\n`;
+      });
+  }
+
+  userStates.delete(userId);
+
+  return ctx.editMessageText(text, {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback("📢 Broadcast Lagi", "broadcast_menu")],
+      [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+    ]),
+  });
+});
+
+// --- Broadcast Forward Confirm & Execute ---
+bot.action("bc_confirm_forward", async (ctx) => {
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+
+  if (!state || !state.phones || !state.target || !state.forwardFrom || !state.forwardMsgIds) {
+    return ctx.editMessageText("❌ Data forward tidak lengkap.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  const delay = state.broadcastDelay || 3000;
+  const totalAccounts = state.phones.length;
+
+  await ctx.editMessageText(
+    `⏳ *Forward broadcast dimulai...*\n\n` +
+      `📊 Target: \`${state.target}\`\n` +
+      `📨 Akun: ${totalAccounts}\n` +
+      `⏱ Delay: ${delay / 1000} detik\n\n` +
+      `_Mem-forward pesan..._`,
+    { parse_mode: "Markdown" }
+  );
+
+  const result = await sessionManager.broadcastForwardToTarget(
+    state.phones,
+    state.target,
+    state.forwardFrom,
+    state.forwardMsgIds,
+    delay
+  );
+
+  const successCount = result.results.filter((r) => r.success).length;
+  const failCount = result.results.filter((r) => !r.success).length;
+
+  let text = `📢 *Hasil Forward Broadcast*\n\n`;
+  text += `🎯 Target: \`${state.target}\`\n`;
+  text += `✅ Berhasil: *${successCount}*\n`;
+  text += `❌ Gagal: *${failCount}*\n\n`;
+
+  if (failCount > 0) {
+    text += `*Detail gagal:*\n`;
+    result.results
+      .filter((r) => !r.success)
+      .forEach((r) => {
+        text += `- \`${r.phone}\`: ${r.error}\n`;
+      });
+  }
+
+  userStates.delete(userId);
+
+  return ctx.editMessageText(text, {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback("📢 Broadcast Lagi", "broadcast_menu")],
+      [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+    ]),
+  });
+});
+
+// Batal broadcast
+bot.action("bc_cancel", (ctx) => {
+  userStates.delete(ctx.from.id);
+  return ctx.editMessageText("❌ Broadcast dibatalkan.", {
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback("◀️ Broadcast Menu", "broadcast_menu")],
+      [Markup.button.callback("◀️ Menu Utama", "main_menu")],
+    ]),
+  });
+});
+
+// Edit pesan broadcast
+bot.action("bc_edit_message", (ctx) => {
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+
+  if (!state) {
+    return ctx.editMessageText("❌ Sesi berakhir.", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]),
+    });
+  }
+
+  userStates.set(userId, { ...state, step: "bc_edit_message" });
+
+  return ctx.editMessageText(
+    "✏️ *Ubah Pesan Broadcast*\n\nMasukkan pesan baru:",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Batal", "bc_cancel")],
+      ]),
+    }
+  );
 });
 
 // ==================== HAPUS AKUN ====================
@@ -987,6 +1477,168 @@ bot.on("text", async (ctx) => {
   }
 
   const text = ctx.message.text.trim();
+
+  // ---------- BROADCAST: Custom Delay ----------
+  if (state.step === "bc_custom_delay") {
+    const delaySeconds = parseFloat(text);
+    if (isNaN(delaySeconds) || delaySeconds < 0.5 || delaySeconds > 60) {
+      return ctx.reply(
+        "❌ Delay harus angka antara 0.5 - 60 detik.\nCoba lagi:",
+        { parse_mode: "Markdown" }
+      );
+    }
+
+    const delayMs = Math.round(delaySeconds * 1000);
+    userStates.set(userId, { broadcastDelay: delayMs });
+
+    return ctx.reply(`✅ Delay broadcast diatur ke *${delaySeconds} detik*`, {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("◀️ Broadcast Menu", "broadcast_menu")],
+      ]),
+    });
+  }
+
+  // ---------- BROADCAST: Input Target ----------
+  if (state.step === "bc_target") {
+    // Simpan target, lalu minta pesan
+    userStates.set(userId, { ...state, step: "bc_message", target: text });
+
+    return ctx.reply(
+      "✅ Target: `" + text + "`\n\n" +
+        "Sekarang masukkan *pesan* yang akan dikirim:\n\n" +
+        "_Ketik pesan teks yang ingin di-broadcast._",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("❌ Batal", "bc_cancel")],
+        ]),
+      }
+    );
+  }
+
+  // ---------- BROADCAST: Input Message ----------
+  if (state.step === "bc_message") {
+    const delay = state.broadcastDelay || 3000;
+
+    userStates.set(userId, { ...state, step: "bc_confirm", message: text });
+
+    // Tampilkan konfirmasi
+    return ctx.reply(
+      "📢 *Konfirmasi Broadcast*\n\n" +
+        `🎯 Target: \`${state.target}\`\n` +
+        `📨 Akun: *${state.phones.length}*\n` +
+        `⏱ Delay: *${delay / 1000} detik*\n\n` +
+        `📝 Pesan:\n\`\`\`\n${text}\n\`\`\`\n\n` +
+        "Kirim sekarang?",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("✅ Kirim Sekarang", "bc_confirm_send")],
+          [Markup.button.callback("✏️ Ubah Pesan", "bc_edit_message")],
+          [Markup.button.callback("❌ Batal", "bc_cancel")],
+        ]),
+      }
+    );
+  }
+
+  // ---------- BROADCAST: Edit Message ----------
+  if (state.step === "bc_edit_message") {
+    const delay = state.broadcastDelay || 3000;
+
+    userStates.set(userId, { ...state, step: "bc_confirm", message: text });
+
+    return ctx.reply(
+      "📢 *Konfirmasi Broadcast (Pesan Diubah)*\n\n" +
+        `🎯 Target: \`${state.target}\`\n` +
+        `📨 Akun: *${state.phones.length}*\n` +
+        `⏱ Delay: *${delay / 1000} detik*\n\n` +
+        `📝 Pesan:\n\`\`\`\n${text}\n\`\`\`\n\n` +
+        "Kirim sekarang?",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("✅ Kirim Sekarang", "bc_confirm_send")],
+          [Markup.button.callback("✏️ Ubah Pesan", "bc_edit_message")],
+          [Markup.button.callback("❌ Batal", "bc_cancel")],
+        ]),
+      }
+    );
+  }
+
+  // ---------- BROADCAST: Forward Target ----------
+  if (state.step === "bc_forward_target") {
+    userStates.set(userId, { ...state, step: "bc_forward_from", target: text });
+
+    return ctx.reply(
+      "✅ Target forward: `" + text + "`\n\n" +
+        "Sekarang masukkan *sumber pesan* (dari mana pesan akan di-forward):\n" +
+        "- Username chat: `@username`\n" +
+        "- Chat ID: `-1001234567890`\n" +
+        "- Username pribadi: `@user`",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("❌ Batal", "bc_cancel")],
+        ]),
+      }
+    );
+  }
+
+  // ---------- BROADCAST: Forward From Peer ----------
+  if (state.step === "bc_forward_from") {
+    userStates.set(userId, { ...state, step: "bc_forward_msgid", forwardFrom: text });
+
+    return ctx.reply(
+      "✅ Sumber: `" + text + "`\n\n" +
+        "Masukkan *ID pesan* yang akan di-forward:\n\n" +
+        "_Contoh: `12345` (satu pesan) atau `12345,12346,12347` (beberapa pesan)_\n\n" +
+        "Tip: Forward pesan ke @userinfobot atau cek di link pesan (t.me/channel/123)",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("❌ Batal", "bc_cancel")],
+        ]),
+      }
+    );
+  }
+
+  // ---------- BROADCAST: Forward Message IDs ----------
+  if (state.step === "bc_forward_msgid") {
+    // Parse message IDs
+    const msgIds = text
+      .split(/[,\s]+/)
+      .map((id) => parseInt(id.trim()))
+      .filter((id) => !isNaN(id) && id > 0);
+
+    if (msgIds.length === 0) {
+      return ctx.reply(
+        "❌ ID pesan tidak valid.\n\nMasukkan angka, pisahkan dengan koma jika lebih dari satu.\n_Contoh: `12345` atau `12345,12346`_",
+        { parse_mode: "Markdown" }
+      );
+    }
+
+    const delay = state.broadcastDelay || 3000;
+
+    userStates.set(userId, { ...state, step: "bc_confirm_forward_ready", forwardMsgIds: msgIds });
+
+    return ctx.reply(
+      "📢 *Konfirmasi Forward Broadcast*\n\n" +
+        `🎯 Target: \`${state.target}\`\n` +
+        `📂 Sumber: \`${state.forwardFrom}\`\n` +
+        `📋 Pesan ID: \`${msgIds.join(", ")}\`\n` +
+        `📨 Akun: *${state.phones.length}*\n` +
+        `⏱ Delay: *${delay / 1000} detik*\n\n` +
+        "Forward sekarang?",
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("✅ Forward Sekarang", "bc_confirm_forward")],
+          [Markup.button.callback("❌ Batal", "bc_cancel")],
+        ]),
+      }
+    );
+  }
 
   // ---------- STEP: Waiting Phone ----------
   if (state.step === "waiting_phone") {

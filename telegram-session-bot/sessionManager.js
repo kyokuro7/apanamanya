@@ -763,6 +763,148 @@ async function checkSpamLimit(phone) {
   }
 }
 
+/**
+ * Kirim pesan broadcast ke target dari satu akun
+ * @param {string} phone - Nomor telepon pengirim
+ * @param {string} target - Target (username, group link, atau user ID)
+ * @param {string} message - Pesan yang akan dikirim
+ * @returns {object} - { success, error }
+ */
+async function sendBroadcastMessage(phone, target, message) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  let client;
+  try {
+    client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
+    );
+    await client.connect();
+
+    // Resolve target entity
+    const entity = await client.getEntity(target);
+    await client.sendMessage(entity, { message: message });
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    try { if (client) await client.disconnect(); } catch (e) {}
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Forward pesan dari satu akun ke target
+ * @param {string} phone - Nomor telepon pengirim
+ * @param {string} target - Target (username, group link, atau user ID)
+ * @param {string} fromPeer - Peer asal pesan
+ * @param {Array<number>} messageIds - ID pesan yang akan di-forward
+ * @returns {object} - { success, error }
+ */
+async function forwardBroadcastMessage(phone, target, fromPeer, messageIds) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  let client;
+  try {
+    client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
+    );
+    await client.connect();
+
+    const targetEntity = await client.getEntity(target);
+    const fromEntity = await client.getEntity(fromPeer);
+
+    await client.forwardMessages(targetEntity, {
+      messages: messageIds,
+      fromPeer: fromEntity,
+    });
+
+    await client.disconnect();
+    return { success: true };
+  } catch (err) {
+    try { if (client) await client.disconnect(); } catch (e) {}
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Broadcast pesan ke target dari banyak akun dengan delay
+ * @param {Array<string>} phones - Daftar nomor telepon pengirim
+ * @param {string} target - Target (username, group link, atau user ID)
+ * @param {string} message - Pesan yang akan dikirim
+ * @param {number} delay - Delay antar pengiriman (ms)
+ * @param {function} onProgress - Callback progress (phone, success, error, index, total)
+ * @returns {object} - { success, results: [{phone, success, error}] }
+ */
+async function broadcastToTarget(phones, target, message, delay = 3000, onProgress = null) {
+  const results = [];
+
+  for (let i = 0; i < phones.length; i++) {
+    const phone = phones[i];
+    const result = await sendBroadcastMessage(phone, target, message);
+
+    results.push({
+      phone,
+      success: result.success,
+      error: result.error || null,
+    });
+
+    if (onProgress) {
+      onProgress(phone, result.success, result.error, i, phones.length);
+    }
+
+    // Delay antar pengiriman (kecuali yang terakhir)
+    if (i < phones.length - 1 && delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  return { success: true, results };
+}
+
+/**
+ * Broadcast forward pesan ke target dari banyak akun dengan delay
+ * @param {Array<string>} phones - Daftar nomor telepon pengirim
+ * @param {string} target - Target
+ * @param {string} fromPeer - Peer asal pesan
+ * @param {Array<number>} messageIds - ID pesan yang akan di-forward
+ * @param {number} delay - Delay antar pengiriman (ms)
+ * @param {function} onProgress - Callback progress
+ * @returns {object} - { success, results: [{phone, success, error}] }
+ */
+async function broadcastForwardToTarget(phones, target, fromPeer, messageIds, delay = 3000, onProgress = null) {
+  const results = [];
+
+  for (let i = 0; i < phones.length; i++) {
+    const phone = phones[i];
+    const result = await forwardBroadcastMessage(phone, target, fromPeer, messageIds);
+
+    results.push({
+      phone,
+      success: result.success,
+      error: result.error || null,
+    });
+
+    if (onProgress) {
+      onProgress(phone, result.success, result.error, i, phones.length);
+    }
+
+    // Delay antar pengiriman (kecuali yang terakhir)
+    if (i < phones.length - 1 && delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  return { success: true, results };
+}
+
 module.exports = {
   loginStates,
   startLogin,
@@ -787,4 +929,8 @@ module.exports = {
   check2FAStatus,
   updateSessionInfo,
   checkSpamLimit,
+  sendBroadcastMessage,
+  forwardBroadcastMessage,
+  broadcastToTarget,
+  broadcastForwardToTarget,
 };
