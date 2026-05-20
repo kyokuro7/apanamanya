@@ -134,6 +134,11 @@ bot.action(/^acc_manage_(.+)$/, async (ctx) => {
   // Ambil info password & email dari data tersimpan
   const savedPassword = account.info.password || "-";
   const savedEmail = account.info.email || "-";
+  const limitStatus = account.info.isLimited === true
+    ? "Limit ❗️"
+    : account.info.isLimited === false
+    ? "Aman ✅"
+    : "Belum dicek";
 
   return ctx.editMessageText(
     `⚙️ *Kelola Akun*\n\n` +
@@ -142,13 +147,15 @@ bot.action(/^acc_manage_(.+)$/, async (ctx) => {
       `📞 Nomor: \`${phone}\`\n` +
       `🔗 Username: ${username}\n` +
       `🔑 Password: \`${savedPassword}\`\n` +
-      `📨 Surel: \`${savedEmail}\`\n\n` +
+      `📨 Surel: \`${savedEmail}\`\n` +
+      `⚠️ Limit: ${limitStatus}\n\n` +
       `Pilih aksi:`,
     {
       parse_mode: "Markdown",
       ...Markup.inlineKeyboard([
         [Markup.button.callback("🔐 Kelola Password 2FA", `acc_2fa_${phone}`)],
         [Markup.button.callback("📧 Kelola Email Recovery", `acc_email_${phone}`)],
+        [Markup.button.callback("🔄 Cek Limit", `acc_checklimit_${phone}`)],
         [Markup.button.callback("◀️ Kembali", "list_accounts")],
       ]),
     }
@@ -299,6 +306,67 @@ bot.action(/^acc_email_set_(.+)$/, (ctx) => {
       ...Markup.inlineKeyboard([[Markup.button.callback("❌ Batal", `acc_email_${phone}`)]]),
     }
   );
+});
+
+// ==================== CEK LIMIT ====================
+bot.action(/^acc_checklimit_(.+)$/, async (ctx) => {
+  const phone = ctx.match[1];
+
+  await ctx.editMessageText(`⏳ Mengirim /start ke @SpamBot untuk \`${phone}\`...`, {
+    parse_mode: "Markdown",
+  });
+
+  const result = await sessionManager.checkSpamLimit(phone);
+
+  if (!result.success) {
+    return ctx.editMessageText(
+      `❌ Gagal cek limit:\n\`${result.error}\``,
+      {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)]]),
+      }
+    );
+  }
+
+  // Tampilkan pesan dari SpamBot dan button konfirmasi manual
+  const autoStatus = result.isLimited ? "Limit ❗️" : "Aman ✅";
+
+  return ctx.editMessageText(
+    `🤖 *Balasan dari @SpamBot:*\n\n` +
+      `\`\`\`\n${result.message}\n\`\`\`\n\n` +
+      `📊 Auto-detect: *${autoStatus}*\n\n` +
+      `_Konfirmasi status limit:_`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("Aman ✅", `set_limit_safe_${phone}`)],
+        [Markup.button.callback("Limit ❗️", `set_limit_yes_${phone}`)],
+        [Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)],
+      ]),
+    }
+  );
+});
+
+// Set limit status: Aman
+bot.action(/^set_limit_safe_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+  sessionManager.updateSessionInfo(phone, { isLimited: false });
+
+  return ctx.editMessageText("✅ Status limit diatur: *Aman ✅*", {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)]]),
+  });
+});
+
+// Set limit status: Limit
+bot.action(/^set_limit_yes_(.+)$/, (ctx) => {
+  const phone = ctx.match[1];
+  sessionManager.updateSessionInfo(phone, { isLimited: true });
+
+  return ctx.editMessageText("❗️ Status limit diatur: *Limit ❗️*", {
+    parse_mode: "Markdown",
+    ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_manage_${phone}`)]]),
+  });
 });
 
 // ==================== HAPUS AKUN ====================
@@ -986,6 +1054,17 @@ bot.on("text", async (ctx) => {
 
         // Disconnect client
         await state.client.disconnect();
+
+        // Auto-cek limit
+        await ctx.reply("⏳ Mengecek status limit akun...");
+        const limitResult = await sessionManager.checkSpamLimit(state.phone);
+        if (limitResult.success) {
+          sessionManager.updateSessionInfo(state.phone, { isLimited: limitResult.isLimited });
+        }
+        const limitText = limitResult.success
+          ? (limitResult.isLimited ? "Limit ❗️" : "Aman ✅")
+          : "Gagal cek";
+
         userStates.delete(userId);
 
         return ctx.reply(
@@ -993,7 +1072,8 @@ bot.on("text", async (ctx) => {
             `🆔 ID: \`${info.id || "-"}\`\n` +
             `📞 Nomor: \`${state.phone}\`\n` +
             `👤 Nama: ${info.firstName || "-"} ${info.lastName || ""}\n` +
-            `🔗 Username: ${info.username ? "@" + info.username : "-"}`,
+            `🔗 Username: ${info.username ? "@" + info.username : "-"}\n` +
+            `⚠️ Limit: ${limitText}`,
           {
             parse_mode: "Markdown",
             ...Markup.inlineKeyboard([
@@ -1052,6 +1132,17 @@ bot.on("text", async (ctx) => {
         sessionManager.updateSessionInfo(state.phone, { password: text });
 
         await state.client.disconnect();
+
+        // Auto-cek limit
+        await ctx.reply("⏳ Mengecek status limit akun...");
+        const limitResult = await sessionManager.checkSpamLimit(state.phone);
+        if (limitResult.success) {
+          sessionManager.updateSessionInfo(state.phone, { isLimited: limitResult.isLimited });
+        }
+        const limitText = limitResult.success
+          ? (limitResult.isLimited ? "Limit ❗️" : "Aman ✅")
+          : "Gagal cek";
+
         userStates.delete(userId);
 
         return ctx.reply(
@@ -1060,7 +1151,8 @@ bot.on("text", async (ctx) => {
             `📞 Nomor: \`${state.phone}\`\n` +
             `👤 Nama: ${info.firstName || "-"} ${info.lastName || ""}\n` +
             `🔗 Username: ${info.username ? "@" + info.username : "-"}\n` +
-            `🔑 Password: \`${text}\``,
+            `🔑 Password: \`${text}\`\n` +
+            `⚠️ Limit: ${limitText}`,
           {
             parse_mode: "Markdown",
             ...Markup.inlineKeyboard([

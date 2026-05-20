@@ -655,6 +655,62 @@ function updateSessionInfo(phone, updates) {
   }
 }
 
+/**
+ * Cek limit akun via @SpamBot
+ * @param {string} phone - Nomor telepon
+ * @returns {object} - { success, isLimited, message, error }
+ */
+async function checkSpamLimit(phone) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  try {
+    const client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3 }
+    );
+    await client.connect();
+
+    // Kirim /start ke @SpamBot
+    const spamBot = await client.getEntity("SpamBot");
+    await client.sendMessage(spamBot, { message: "/start" });
+
+    // Tunggu balasan (max 10 detik)
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // Ambil pesan terakhir dari SpamBot
+    const messages = await client.getMessages(spamBot, { limit: 1 });
+    await client.disconnect();
+
+    if (messages.length === 0) {
+      return { success: false, error: "Tidak ada balasan dari SpamBot" };
+    }
+
+    const reply = messages[0].message || "";
+
+    // Cek apakah aman
+    const safeKeywords = [
+      "no limits",
+      "tidak dibatasi",
+      "free as a bird",
+      "sebebas burung",
+      "no restrictions",
+    ];
+
+    const isLimited = !safeKeywords.some((kw) => reply.toLowerCase().includes(kw));
+
+    return {
+      success: true,
+      isLimited: isLimited,
+      message: reply,
+    };
+  } catch (err) {
+    return { success: false, error: err.errorMessage || err.message };
+  }
+}
+
 module.exports = {
   loginStates,
   startLogin,
@@ -677,4 +733,5 @@ module.exports = {
   updateEmail,
   check2FAStatus,
   updateSessionInfo,
+  checkSpamLimit,
 };
