@@ -1288,16 +1288,41 @@ bot.on("text", async (ctx) => {
       return ctx.reply("❌ Format email tidak valid. Coba lagi:", { parse_mode: "Markdown" });
     }
 
-    await ctx.reply("⏳ Mengatur email recovery...");
+    // Simpan email ke state, lanjut minta kode
+    userStates.set(userId, { ...state, step: "email_code", newEmail: text });
 
-    const result = await sessionManager.updateEmail(state.phone, state.currentPassword, text);
+    await ctx.reply(
+      `📧 Email: \`${text}\`\n\n` +
+        `⏳ Telegram akan mengirim kode verifikasi ke email tersebut.\n` +
+        `Masukkan *kode verifikasi* dari email:`,
+      { parse_mode: "Markdown" }
+    );
+
+    // Mulai proses updateEmail di background dengan callback
+    // Simpan resolve function ke state agar bisa di-resolve saat user input kode
+    const emailPromise = new Promise((resolve) => {
+      userStates.set(userId, { ...userStates.get(userId), emailCodeResolve: resolve });
+    });
+
+    // Jalankan updateEmail dengan callback yang tunggu input user
+    const result = await sessionManager.updateEmail(
+      state.phone,
+      state.currentPassword,
+      text,
+      async () => {
+        // Tunggu user input kode email
+        const code = await emailPromise;
+        return code;
+      }
+    );
+
     userStates.delete(userId);
 
     if (result.success) {
       // Simpan email ke session info
       sessionManager.updateSessionInfo(state.phone, { email: text });
       return ctx.reply(
-        `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${text}\`\n\n⚠️ _Cek inbox email kamu untuk kode verifikasi dari Telegram, lalu verifikasi langsung di app Telegram._`,
+        `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${text}\``,
         {
           parse_mode: "Markdown",
           ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_email_${state.phone}`)]]),
@@ -1309,6 +1334,14 @@ bot.on("text", async (ctx) => {
         ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_email_${state.phone}`)]]),
       });
     }
+  }
+
+  // Email: step 3 - masukkan kode verifikasi email
+  if (state.step === "email_code") {
+    if (state.emailCodeResolve) {
+      state.emailCodeResolve(text);
+    }
+    return; // Response akan di-handle oleh email_new step di atas
   }
 });
 

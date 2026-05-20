@@ -577,13 +577,14 @@ async function addPassword(phone, newPassword, hint = "", email = "") {
 }
 
 /**
- * Update/Set recovery email 2FA
+ * Update/Set recovery email 2FA - Step 1: Kirim request email
  * @param {string} phone - Nomor telepon
  * @param {string} currentPassword - Password 2FA saat ini
  * @param {string} newEmail - Email baru
- * @returns {object} - { success, needEmailCode, error }
+ * @param {function} emailCodeCallback - Async callback yang return kode email dari user
+ * @returns {object} - { success, error }
  */
-async function updateEmail(phone, currentPassword, newEmail) {
+async function updateEmail(phone, currentPassword, newEmail, emailCodeCallback) {
   const sessionString = loadSession(phone);
   if (!sessionString) return { success: false, error: "Session not found" };
 
@@ -600,24 +601,21 @@ async function updateEmail(phone, currentPassword, newEmail) {
       currentPassword: currentPassword,
       newPassword: currentPassword, // keep same password
       email: newEmail,
-      emailCodeCallback: async () => {
-        // Return empty string - email akan pending verification
-        // User bisa verif langsung dari email
-        return "";
-      },
-      onEmailCodeError: () => {
-        // Skip email code error - email tetap di-set tapi pending
-        return "";
+      emailCodeCallback: emailCodeCallback,
+      onEmailCodeError: (err) => {
+        throw new Error("EMAIL_CODE_INVALID");
       },
     });
 
     await client.disconnect();
     return { success: true };
   } catch (err) {
-    // Jika error karena EMAIL_UNCONFIRMED, itu artinya email sudah di-set tapi belum diverifikasi
+    try { await client.disconnect(); } catch (e) {}
+    if (err.message === "EMAIL_CODE_INVALID") {
+      return { success: false, error: "Kode email salah" };
+    }
     if (err.errorMessage && err.errorMessage.includes("EMAIL_UNCONFIRMED")) {
-      await client.disconnect();
-      return { success: true, needEmailCode: true };
+      return { success: true };
     }
     return { success: false, error: err.errorMessage || err.message };
   }
