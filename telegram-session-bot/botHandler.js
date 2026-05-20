@@ -1297,7 +1297,7 @@ bot.on("text", async (ctx) => {
       // Simpan email ke session info
       sessionManager.updateSessionInfo(state.phone, { email: text });
       return ctx.reply(
-        `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${text}\`\n\n_Cek inbox email untuk verifikasi._`,
+        `✅ *Email recovery berhasil diatur!*\n\n📧 Email: \`${text}\`\n\n⚠️ _Cek inbox email kamu untuk kode verifikasi dari Telegram, lalu verifikasi langsung di app Telegram._`,
         {
           parse_mode: "Markdown",
           ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", `acc_email_${state.phone}`)]]),

@@ -560,6 +560,8 @@ async function addPassword(phone, newPassword, hint = "", email = "") {
     };
     if (email) {
       params.email = email;
+      params.emailCodeCallback = async () => "";
+      params.onEmailCodeError = () => "";
     }
 
     await client.updateTwoFaSettings(params);
@@ -567,6 +569,9 @@ async function addPassword(phone, newPassword, hint = "", email = "") {
     await client.disconnect();
     return { success: true };
   } catch (err) {
+    if (err.errorMessage && err.errorMessage.includes("EMAIL_UNCONFIRMED")) {
+      return { success: true };
+    }
     return { success: false, error: err.errorMessage || err.message };
   }
 }
@@ -576,7 +581,7 @@ async function addPassword(phone, newPassword, hint = "", email = "") {
  * @param {string} phone - Nomor telepon
  * @param {string} currentPassword - Password 2FA saat ini
  * @param {string} newEmail - Email baru
- * @returns {object} - { success, error }
+ * @returns {object} - { success, needEmailCode, error }
  */
 async function updateEmail(phone, currentPassword, newEmail) {
   const sessionString = loadSession(phone);
@@ -595,11 +600,25 @@ async function updateEmail(phone, currentPassword, newEmail) {
       currentPassword: currentPassword,
       newPassword: currentPassword, // keep same password
       email: newEmail,
+      emailCodeCallback: async () => {
+        // Return empty string - email akan pending verification
+        // User bisa verif langsung dari email
+        return "";
+      },
+      onEmailCodeError: () => {
+        // Skip email code error - email tetap di-set tapi pending
+        return "";
+      },
     });
 
     await client.disconnect();
     return { success: true };
   } catch (err) {
+    // Jika error karena EMAIL_UNCONFIRMED, itu artinya email sudah di-set tapi belum diverifikasi
+    if (err.errorMessage && err.errorMessage.includes("EMAIL_UNCONFIRMED")) {
+      await client.disconnect();
+      return { success: true, needEmailCode: true };
+    }
     return { success: false, error: err.errorMessage || err.message };
   }
 }
