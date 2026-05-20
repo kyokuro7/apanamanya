@@ -18,6 +18,9 @@ async function startLogin(phone) {
   const stringSession = new StringSession("");
   const client = new TelegramClient(stringSession, config.API_ID, config.API_HASH, {
     connectionRetries: 5,
+    timeout: 30,
+    requestRetries: 3,
+    useWSS: false,
   });
 
   await client.connect();
@@ -196,7 +199,7 @@ async function getAccountInfo(phone) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -229,7 +232,7 @@ async function getActiveSessions(phone) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -273,7 +276,7 @@ async function terminateSession(phone, sessionHash) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -304,7 +307,7 @@ async function terminateAllOtherSessions(phone) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -331,7 +334,7 @@ async function logoutSession(phone) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -426,7 +429,7 @@ async function restoreBackup(backupData) {
         new StringSession(sessionData.session),
         config.API_ID,
         config.API_HASH,
-        { connectionRetries: 3 }
+        { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
       );
       await client.connect();
 
@@ -481,7 +484,7 @@ async function changePassword(phone, currentPassword, newPassword, hint = "") {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -514,7 +517,7 @@ async function removePassword(phone, currentPassword) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -547,7 +550,7 @@ async function addPassword(phone, newPassword, hint = "", email = "") {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -584,7 +587,7 @@ async function updateEmail(phone, currentPassword, newEmail) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -615,7 +618,7 @@ async function check2FAStatus(phone) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
@@ -670,7 +673,7 @@ async function checkSpamLimit(phone) {
       new StringSession(sessionString),
       config.API_ID,
       config.API_HASH,
-      { connectionRetries: 3 }
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
     );
     await client.connect();
 
