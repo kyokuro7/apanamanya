@@ -230,7 +230,7 @@ function registerBroadcastHandlers(bot, userStates) {
         );
       } catch (e) {}
 
-      // Forward broadcast untuk akun ini
+      // Forward broadcast untuk akun ini - coba forward dulu, fallback ke sendMessage
       const result = await sessionManager.forwardBroadcast(phone, forwardInfo, grupDelay);
 
       if (result.success) {
@@ -267,9 +267,11 @@ function registerBroadcastHandlers(bot, userStates) {
     if (!state) return;
     userStates.set(ctx.from.id, { ...state, step: "bc_waiting_forward" });
     return ctx.editMessageText(
-      "📨 *Set Pesan Broadcast (Forward)*\n\n" +
-      "Forward pesan yang ingin di-broadcast ke sini.\n\n" +
-      "_Pesan akan di-forward ke semua grup dari setiap akun secara bergiliran._",
+      "📨 *Set Pesan Broadcast*\n\n" +
+      "Kirim atau forward pesan yang ingin di-broadcast ke sini.\n\n" +
+      "✅ Bisa forward dari channel/grup\n" +
+      "✅ Bisa kirim pesan langsung (teks)\n\n" +
+      "_Pesan akan dikirim ke semua grup dari setiap akun secara bergiliran._",
       {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([[Markup.button.callback("❌ Batal", "bc_panel_back")]]),
@@ -358,46 +360,38 @@ function registerBroadcastHandlers(bot, userStates) {
 
     const msg = ctx.message;
 
-    // Cek apakah pesan adalah forward
-    if (!msg.forward_from && !msg.forward_from_chat && !msg.forward_sender_name) {
+    // Ambil konten pesan (baik forward maupun pesan biasa)
+    // Kita simpan text/caption apa adanya untuk dikirim ulang via sendMessage
+    const text = msg.text || msg.caption || "";
+
+    if (!text) {
       return ctx.reply(
-        "⚠️ Pesan harus berupa *forward*!\n\nForward pesan dari chat/channel/grup yang ingin di-broadcast.",
+        "⚠️ Pesan harus mengandung teks!\n\nForward pesan yang memiliki teks/caption.",
         { parse_mode: "Markdown" }
       );
     }
 
-    // Simpan info forward: dari mana dan message ID-nya
-    // Untuk GramJS, kita perlu fromPeer (chat id sumber) dan msgIds
-    let fromPeer = null;
-    if (msg.forward_from_chat) {
-      // Forward dari channel/grup
-      fromPeer = msg.forward_from_chat.id;
-    } else if (msg.forward_from) {
-      // Forward dari user
-      fromPeer = msg.forward_from.id;
-    }
-
-    // Simpan pesan asli di "saved messages" tiap akun agar bisa di-forward
-    // Alternatif: simpan forward_origin info untuk di-forward nanti
+    // Simpan info pesan
     const forwardInfo = {
-      fromPeer: fromPeer,
+      // fromPeer & msgIds untuk forward via GramJS (jika akun punya akses ke chat sumber)
+      fromPeer: msg.forward_from_chat ? msg.forward_from_chat.id : (msg.forward_from ? msg.forward_from.id : null),
       msgIds: [msg.forward_from_message_id || msg.message_id],
-      // Backup: simpan juga text/caption untuk fallback
-      text: msg.text || msg.caption || "",
+      // Text yang akan dikirim ulang via sendMessage sebagai fallback/utama
+      text: text,
       fromChatId: msg.forward_from_chat ? msg.forward_from_chat.id : null,
       fromChatTitle: msg.forward_from_chat ? msg.forward_from_chat.title : null,
-      fromUser: msg.forward_from ? msg.forward_from.first_name : msg.forward_sender_name || null,
+      fromUser: msg.forward_from ? msg.forward_from.first_name : (msg.forward_sender_name || null),
     };
 
     userStates.set(userId, { ...state, step: "bc_panel", forwardInfo });
     autoBroadcastState.forwardInfo = forwardInfo;
 
-    const source = forwardInfo.fromChatTitle || forwardInfo.fromUser || "Unknown";
+    const source = forwardInfo.fromChatTitle || forwardInfo.fromUser || "Langsung";
     return ctx.reply(
-      `✅ Pesan forward berhasil disimpan!\n\n` +
+      `✅ Pesan broadcast berhasil disimpan!\n\n` +
       `📨 Sumber: *${source}*\n` +
-      `📝 Preview: _${(forwardInfo.text || "").substring(0, 50)}${forwardInfo.text && forwardInfo.text.length > 50 ? "..." : ""}_\n\n` +
-      `Pesan ini akan di-forward ke semua grup.`,
+      `📝 Preview: _${text.substring(0, 100)}${text.length > 100 ? "..." : ""}_\n\n` +
+      `Pesan ini akan dikirim ke semua grup.`,
       {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali ke Panel", "bc_panel_back")]]),

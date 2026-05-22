@@ -819,8 +819,9 @@ async function broadcastMessage(phone, bcMessage, grupDelay = 500) {
 
 /**
  * Forward pesan dari sumber ke semua grup dari satu akun
+ * Strategi: coba forward dulu, jika gagal (akun tidak punya akses), fallback ke sendMessage
  * @param {string} phone - Nomor telepon
- * @param {object} forwardInfo - { fromPeer (chat id sumber), msgIds (array message id) }
+ * @param {object} forwardInfo - { fromPeer, msgIds, text }
  * @param {number} grupDelay - Jeda antar grup (ms)
  * @returns {object} - { success, sent, failed, total, error }
  */
@@ -828,8 +829,16 @@ async function forwardBroadcast(phone, forwardInfo, grupDelay = 500) {
   const sessionString = loadSession(phone);
   if (!sessionString) return { success: false, sent: 0, failed: 0, total: 0, error: "Session not found" };
 
-  if (!forwardInfo || !forwardInfo.fromPeer || !forwardInfo.msgIds || forwardInfo.msgIds.length === 0) {
+  if (!forwardInfo) {
     return { success: false, sent: 0, failed: 0, total: 0, error: "Forward info tidak lengkap" };
+  }
+
+  // Jika tidak ada fromPeer/msgIds yang valid, langsung pakai sendMessage
+  const canForward = forwardInfo.fromPeer && forwardInfo.msgIds && forwardInfo.msgIds.length > 0 && forwardInfo.msgIds[0];
+  const text = forwardInfo.text || "";
+
+  if (!canForward && !text) {
+    return { success: false, sent: 0, failed: 0, total: 0, error: "Tidak ada pesan untuk dikirim" };
   }
 
   let client;
@@ -852,13 +861,39 @@ async function forwardBroadcast(phone, forwardInfo, grupDelay = 500) {
     }
 
     let sent = 0, failed = 0;
+    let useForward = canForward;
+    let forwardFailed = false;
+
     for (let i = 0; i < groups.length; i++) {
       try {
-        await client.forwardMessages(groups[i].entity, {
-          messages: forwardInfo.msgIds,
-          fromPeer: forwardInfo.fromPeer,
-        });
-        sent++;
+        if (useForward && !forwardFailed) {
+          // Coba forward
+          try {
+            await client.forwardMessages(groups[i].entity, {
+              messages: forwardInfo.msgIds,
+              fromPeer: forwardInfo.fromPeer,
+            });
+            sent++;
+          } catch (fwdErr) {
+            // Forward gagal (akun tidak punya akses ke chat sumber)
+            // Fallback ke sendMessage untuk sisa grup
+            forwardFailed = true;
+            if (text) {
+              await client.sendMessage(groups[i].entity, { message: text });
+              sent++;
+            } else {
+              failed++;
+            }
+          }
+        } else {
+          // Gunakan sendMessage
+          if (text) {
+            await client.sendMessage(groups[i].entity, { message: text });
+            sent++;
+          } else {
+            failed++;
+          }
+        }
       } catch (e) {
         failed++;
       }
