@@ -764,9 +764,64 @@ async function checkSpamLimit(phone) {
 }
 
 /**
- * Broadcast pesan ke semua grup dari satu atau banyak akun
+ * Broadcast pesan ke semua grup dari satu akun menggunakan forward (pesan tidak diubah)
+ * @param {string} phone - Nomor telepon
+ * @param {object} bcMessage - { msgId, fromChatId, text, caption, type }
+ * @param {number} grupDelay - Jeda antar grup (ms)
+ * @returns {object} - { success, sent, failed, total, error }
+ */
+async function broadcastForward(phone, bcMessage, grupDelay = 500) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, sent: 0, failed: 0, total: 0, error: "Session not found" };
+
+  let client;
+  try {
+    client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
+    );
+    await client.connect();
+
+    // Ambil semua dialog
+    const dialogs = await client.getDialogs({ limit: 500 });
+    const groups = [];
+    for (const dialog of dialogs) {
+      if (dialog.isGroup || (dialog.entity && dialog.entity.className === "Channel" && dialog.entity.megagroup)) {
+        groups.push(dialog);
+      }
+    }
+
+    let sent = 0, failed = 0;
+    for (let i = 0; i < groups.length; i++) {
+      try {
+        // Forward pesan apa adanya (tidak mengubah formatting, quote, dll)
+        await client.forwardMessages(groups[i].entity, {
+          messages: [bcMessage.msgId],
+          fromPeer: bcMessage.fromChatId,
+        });
+        sent++;
+      } catch (e) {
+        failed++;
+      }
+      if (i < groups.length - 1 && grupDelay > 0) {
+        await new Promise((r) => setTimeout(r, grupDelay));
+      }
+    }
+
+    await client.disconnect();
+    return { success: true, sent, failed, total: groups.length };
+  } catch (err) {
+    try { if (client) await client.disconnect(); } catch (e) {}
+    return { success: false, sent: 0, failed: 0, total: 0, error: err.errorMessage || err.message };
+  }
+}
+
+/**
+ * Broadcast pesan ke semua grup dari satu atau banyak akun (legacy, menggunakan forward)
  * @param {Array<string>} phones - Daftar nomor telepon
- * @param {object} bcMessage - { type, text, fileId, caption, entities, captionEntities }
+ * @param {object} bcMessage - { msgId, fromChatId, text, caption, type }
  * @param {number} grupDelay - Jeda antar grup (ms)
  * @returns {object} - { success, results: [{phone, sent, failed, total, error}] }
  */
@@ -774,64 +829,11 @@ async function broadcastToAllGroups(phones, bcMessage, grupDelay = 500) {
   const results = [];
 
   for (const phone of phones) {
-    const sessionString = loadSession(phone);
-    if (!sessionString) {
-      results.push({ phone, success: false, sent: 0, failed: 0, total: 0, error: "Session not found" });
-      continue;
-    }
-
-    let client;
-    try {
-      client = new TelegramClient(
-        new StringSession(sessionString),
-        config.API_ID,
-        config.API_HASH,
-        { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
-      );
-      await client.connect();
-
-      // Ambil semua dialog
-      const dialogs = await client.getDialogs({ limit: 500 });
-      const groups = [];
-      for (const dialog of dialogs) {
-        if (dialog.isGroup || (dialog.entity && dialog.entity.className === "Channel" && dialog.entity.megagroup)) {
-          groups.push(dialog);
-        }
-      }
-
-      let sent = 0, failed = 0;
-      for (let i = 0; i < groups.length; i++) {
-        try {
-          await sendCopyMessage(client, groups[i].entity, bcMessage);
-          sent++;
-        } catch (e) {
-          failed++;
-        }
-        if (i < groups.length - 1 && grupDelay > 0) {
-          await new Promise((r) => setTimeout(r, grupDelay));
-        }
-      }
-
-      await client.disconnect();
-      results.push({ phone, success: true, sent, failed, total: groups.length });
-    } catch (err) {
-      try { if (client) await client.disconnect(); } catch (e) {}
-      results.push({ phone, success: false, sent: 0, failed: 0, total: 0, error: err.errorMessage || err.message });
-    }
+    const result = await broadcastForward(phone, bcMessage, grupDelay);
+    results.push({ phone, ...result });
   }
 
   return { success: true, results };
-}
-
-/**
- * Send copy message (bukan forward) ke entity
- * GramJS sendMessage hanya support text. Untuk media, kirim text/caption.
- */
-async function sendCopyMessage(client, entity, bcMessage) {
-  const text = bcMessage.text || bcMessage.caption || "";
-  if (text) {
-    await client.sendMessage(entity, { message: text });
-  }
 }
 
 /**
@@ -923,5 +925,6 @@ module.exports = {
   checkSpamLimit,
   getOTPCode,
 
+  broadcastForward,
   broadcastToAllGroups,
 };
