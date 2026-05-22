@@ -990,8 +990,8 @@ bot.on("document", async (ctx) => {
   const userId = ctx.from.id;
   const state = userStates.get(userId);
 
-  // Check broadcast first
-  if (state && (state.step === "bc_waiting_message" || state.step === "autobc_waiting_message")) {
+  // Check broadcast forward first
+  if (state && state.step === "bc_waiting_forward") {
     const result = handleBroadcastMedia(ctx, userId, state);
     if (result) return result;
   }

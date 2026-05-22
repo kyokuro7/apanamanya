@@ -818,6 +818,64 @@ async function broadcastMessage(phone, bcMessage, grupDelay = 500) {
 }
 
 /**
+ * Forward pesan dari sumber ke semua grup dari satu akun
+ * @param {string} phone - Nomor telepon
+ * @param {object} forwardInfo - { fromPeer (chat id sumber), msgIds (array message id) }
+ * @param {number} grupDelay - Jeda antar grup (ms)
+ * @returns {object} - { success, sent, failed, total, error }
+ */
+async function forwardBroadcast(phone, forwardInfo, grupDelay = 500) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, sent: 0, failed: 0, total: 0, error: "Session not found" };
+
+  if (!forwardInfo || !forwardInfo.fromPeer || !forwardInfo.msgIds || forwardInfo.msgIds.length === 0) {
+    return { success: false, sent: 0, failed: 0, total: 0, error: "Forward info tidak lengkap" };
+  }
+
+  let client;
+  try {
+    client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
+    );
+    await client.connect();
+
+    // Ambil semua dialog
+    const dialogs = await client.getDialogs({ limit: 500 });
+    const groups = [];
+    for (const dialog of dialogs) {
+      if (dialog.isGroup || (dialog.entity && dialog.entity.className === "Channel" && dialog.entity.megagroup)) {
+        groups.push(dialog);
+      }
+    }
+
+    let sent = 0, failed = 0;
+    for (let i = 0; i < groups.length; i++) {
+      try {
+        await client.forwardMessages(groups[i].entity, {
+          messages: forwardInfo.msgIds,
+          fromPeer: forwardInfo.fromPeer,
+        });
+        sent++;
+      } catch (e) {
+        failed++;
+      }
+      if (i < groups.length - 1 && grupDelay > 0) {
+        await new Promise((r) => setTimeout(r, grupDelay));
+      }
+    }
+
+    await client.disconnect();
+    return { success: true, sent, failed, total: groups.length };
+  } catch (err) {
+    try { if (client) await client.disconnect(); } catch (e) {}
+    return { success: false, sent: 0, failed: 0, total: 0, error: err.errorMessage || err.message };
+  }
+}
+
+/**
  * Broadcast pesan ke semua grup dari satu atau banyak akun
  * @param {Array<string>} phones - Daftar nomor telepon
  * @param {object} bcMessage - { type, text, entities, caption, captionEntities, fileId }
@@ -980,6 +1038,7 @@ module.exports = {
   getOTPCode,
 
   broadcastMessage,
+  forwardBroadcast,
   broadcastToAllGroups,
   joinGroup,
 };
