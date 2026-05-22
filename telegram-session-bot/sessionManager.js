@@ -764,15 +764,18 @@ async function checkSpamLimit(phone) {
 }
 
 /**
- * Broadcast pesan ke semua grup dari satu akun (kirim ulang pesan apa adanya dengan formatting/entities utuh)
+ * Broadcast pesan ke semua grup dari satu akun (kirim teks apa adanya)
  * @param {string} phone - Nomor telepon
- * @param {object} bcMessage - { type, text, entities, caption, captionEntities, fileId }
+ * @param {object} bcMessage - { text }
  * @param {number} grupDelay - Jeda antar grup (ms)
  * @returns {object} - { success, sent, failed, total, error }
  */
 async function broadcastMessage(phone, bcMessage, grupDelay = 500) {
   const sessionString = loadSession(phone);
   if (!sessionString) return { success: false, sent: 0, failed: 0, total: 0, error: "Session not found" };
+
+  const text = bcMessage.text || "";
+  if (!text) return { success: false, sent: 0, failed: 0, total: 0, error: "Pesan kosong" };
 
   let client;
   try {
@@ -796,39 +799,10 @@ async function broadcastMessage(phone, bcMessage, grupDelay = 500) {
     let sent = 0, failed = 0;
     for (let i = 0; i < groups.length; i++) {
       try {
-        // Kirim pesan apa adanya dengan formatting utuh
-        if (bcMessage.type === "text") {
-          // Kirim teks dengan entities (bold, italic, quote, dll tetap utuh)
-          await client.sendMessage(groups[i].entity, {
-            message: bcMessage.text,
-            formattingEntities: bcMessage.entities || undefined,
-          });
-        } else {
-          // Untuk media: kirim dengan caption + entities
-          await client.sendMessage(groups[i].entity, {
-            message: bcMessage.caption || "",
-            formattingEntities: bcMessage.captionEntities || undefined,
-            file: bcMessage.fileId ? new Api.InputDocument({ id: 0, accessHash: BigInt(0), fileReference: Buffer.from("") }) : undefined,
-          });
-          // Fallback: kirim caption saja jika file gagal
-        }
+        await client.sendMessage(groups[i].entity, { message: text });
         sent++;
       } catch (e) {
-        // Fallback: coba kirim teks saja
-        try {
-          const fallbackText = bcMessage.text || bcMessage.caption || "";
-          if (fallbackText) {
-            await client.sendMessage(groups[i].entity, {
-              message: fallbackText,
-              formattingEntities: bcMessage.entities || bcMessage.captionEntities || undefined,
-            });
-            sent++;
-          } else {
-            failed++;
-          }
-        } catch (e2) {
-          failed++;
-        }
+        failed++;
       }
       if (i < groups.length - 1 && grupDelay > 0) {
         await new Promise((r) => setTimeout(r, grupDelay));
