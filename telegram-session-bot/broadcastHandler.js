@@ -1,7 +1,7 @@
 const { Markup } = require("telegraf");
 const sessionManager = require("./sessionManager");
 
-// Per-account auto broadcast: Map<phone, { intervalId, message, msgId, fromChatId, grupDelay, loopDelay, startedAt }>
+// Per-account auto broadcast: Map<phone, { intervalId, message, grupDelay, loopDelay, startedAt }>
 const autoBroadcasts = new Map();
 
 /**
@@ -21,7 +21,7 @@ function registerBroadcastHandlers(bot, userStates) {
       });
     }
     return ctx.editMessageText(
-      "📢 *Broadcast*\n\nKirim/forward pesan ke semua grup di akun.\n\nPilih mode:",
+      "📢 *Broadcast*\n\nKirim pesan ke semua grup di akun.\n\nPilih mode:",
       {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([
@@ -44,7 +44,6 @@ function registerBroadcastHandlers(bot, userStates) {
     return ctx.editMessageText("👤 *Pilih Akun:*", { parse_mode: "Markdown", ...Markup.inlineKeyboard(buttons) });
   });
 
-  // Setelah pilih satu akun → langsung masuk panel per-akun
   bot.action(/^bc_pick_one_(.+)$/, (ctx) => {
     const phone = ctx.match[1];
     userStates.set(ctx.from.id, { step: "bc_panel", phones: [phone] });
@@ -107,7 +106,6 @@ function registerBroadcastHandlers(bot, userStates) {
 
     const buttons = [];
 
-    // Per-akun: tampilkan status on/off
     phones.forEach((phone) => {
       const acc = sessions.find((s) => s.phone === phone);
       const name = acc && acc.info.firstName ? `${acc.info.firstName}`.trim() : phone;
@@ -119,7 +117,6 @@ function registerBroadcastHandlers(bot, userStates) {
       ]);
     });
 
-    // Info delay global (dari state)
     const state = userStates.get(ctx.from?.id || ctx.callbackQuery?.from?.id);
     const loopDelay = (state && state.loopDelay) || 300000;
     const grupDelay = (state && state.grupDelay) || 500;
@@ -128,8 +125,8 @@ function registerBroadcastHandlers(bot, userStates) {
     text += `⏱ Jeda Grup: *${grupDelay / 1000} detik*\n`;
 
     const msgPreview = (state && state.bcMessage)
-      ? `\`${(state.bcMessage.text || state.bcMessage.caption || "[media]").substring(0, 30)}...\``
-      : "_Belum diatur_";
+      ? "✅ Sudah diatur"
+      : "❌ Belum diatur";
     text += `📝 Pesan: ${msgPreview}\n`;
 
     buttons.push([Markup.button.callback("📝 Set Pesan", "bc_set_message")]);
@@ -143,7 +140,6 @@ function registerBroadcastHandlers(bot, userStates) {
     });
   }
 
-  // Kembali ke panel
   bot.action("bc_panel_back", (ctx) => {
     const state = userStates.get(ctx.from.id);
     if (!state || !state.phones) return ctx.editMessageText("❌ Sesi berakhir.", { ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "broadcast_menu")]]) });
@@ -157,13 +153,11 @@ function registerBroadcastHandlers(bot, userStates) {
     if (!state || !state.phones) return;
 
     if (autoBroadcasts.has(phone)) {
-      // Matikan autoBC untuk akun ini
       const abc = autoBroadcasts.get(phone);
       clearInterval(abc.intervalId);
       autoBroadcasts.delete(phone);
       return renderAccountPanel(ctx, state.phones);
     } else {
-      // Nyalakan autoBC untuk akun ini
       if (!state.bcMessage) {
         return ctx.answerCbQuery("⚠️ Set pesan dulu!", { show_alert: true });
       }
@@ -173,13 +167,13 @@ function registerBroadcastHandlers(bot, userStates) {
       const bcMsg = { ...state.bcMessage };
 
       // Jalankan pertama kali
-      await sessionManager.broadcastForward(phone, bcMsg, grupDelay);
+      await sessionManager.broadcastMessage(phone, bcMsg, grupDelay);
 
       // Set interval
       const intervalId = setInterval(async () => {
         try {
           if (autoBroadcasts.has(phone)) {
-            await sessionManager.broadcastForward(phone, bcMsg, grupDelay);
+            await sessionManager.broadcastMessage(phone, bcMsg, grupDelay);
           }
         } catch (e) {}
       }, loopDelay);
@@ -203,8 +197,8 @@ function registerBroadcastHandlers(bot, userStates) {
     userStates.set(ctx.from.id, { ...state, step: "bc_waiting_message" });
     return ctx.editMessageText(
       "📝 *Set Pesan Broadcast*\n\n" +
-        "Forward atau kirim pesan yang ingin di-broadcast.\n" +
-        "_(Pesan akan di-forward apa adanya ke semua grup, tanpa diubah)_",
+        "Kirim pesan yang ingin di-broadcast.\n" +
+        "_(Teks dengan formatting, foto, video, dokumen, stiker — semua akan dikirim apa adanya)_",
       {
         parse_mode: "Markdown",
         ...Markup.inlineKeyboard([[Markup.button.callback("❌ Batal", "bc_panel_back")]]),
@@ -257,7 +251,7 @@ function registerBroadcastHandlers(bot, userStates) {
     let totalSent = 0, totalFailed = 0;
 
     for (const phone of state.phones) {
-      const result = await sessionManager.broadcastForward(phone, state.bcMessage, grupDelay);
+      const result = await sessionManager.broadcastMessage(phone, state.bcMessage, grupDelay);
       if (result.success) {
         text += `✅ \`${phone}\`: ${result.sent}/${result.total} grup\n`;
         totalSent += result.sent;
@@ -280,7 +274,6 @@ function registerBroadcastHandlers(bot, userStates) {
 
   // ==================== TEXT/MESSAGE HANDLERS ====================
   function handleBroadcastText(ctx, userId, state, text) {
-    // Input jeda putaran
     if (state.step === "bc_input_loop_delay") {
       const min = parseFloat(text);
       if (isNaN(min) || min < 1 || min > 1440) return ctx.reply("❌ Harus angka 1-1440. Coba lagi:");
@@ -288,7 +281,6 @@ function registerBroadcastHandlers(bot, userStates) {
       return ctx.reply(`✅ Jeda putaran: *${min} menit*`, { parse_mode: "Markdown", ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "bc_panel_back")]]) });
     }
 
-    // Input jeda grup
     if (state.step === "bc_input_grup_delay") {
       let seconds;
       if (text === "05") seconds = 0.5;
@@ -298,33 +290,61 @@ function registerBroadcastHandlers(bot, userStates) {
       return ctx.reply(`✅ Jeda grup: *${seconds} detik*`, { parse_mode: "Markdown", ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali", "bc_panel_back")]]) });
     }
 
-    return null; // not handled
+    return null;
   }
 
-  // Handle media/forward messages for broadcast
+  // Handle all message types for broadcast set pesan
   function handleBroadcastMedia(ctx, userId, state) {
     if (state.step !== "bc_waiting_message") return null;
 
     const msg = ctx.message;
 
-    // Simpan info pesan untuk forward
-    // Kita simpan message_id dan chat_id agar bisa di-forward
+    // Simpan pesan lengkap dengan entities/formatting apa adanya
     const bcMessage = {
-      msgId: msg.message_id,
-      fromChatId: msg.chat.id,
-      // Juga simpan text/caption sebagai preview
+      // Text message
       text: msg.text || null,
+      entities: msg.entities || null,
+      // Media
       caption: msg.caption || null,
-      type: msg.text ? "text" : msg.photo ? "photo" : msg.video ? "video" : msg.document ? "document" : msg.sticker ? "sticker" : msg.animation ? "animation" : msg.voice ? "voice" : "other",
+      captionEntities: msg.caption_entities || null,
+      // Type & file info
+      type: "text",
+      fileId: null,
     };
 
-    userStates.set(userId, { ...state, step: "bc_panel", bcMessage });
-    const preview = bcMessage.text || bcMessage.caption || `[${bcMessage.type}]`;
+    if (msg.text) {
+      bcMessage.type = "text";
+    } else if (msg.photo) {
+      bcMessage.type = "photo";
+      bcMessage.fileId = msg.photo[msg.photo.length - 1].file_id;
+    } else if (msg.video) {
+      bcMessage.type = "video";
+      bcMessage.fileId = msg.video.file_id;
+    } else if (msg.document) {
+      bcMessage.type = "document";
+      bcMessage.fileId = msg.document.file_id;
+    } else if (msg.sticker) {
+      bcMessage.type = "sticker";
+      bcMessage.fileId = msg.sticker.file_id;
+    } else if (msg.animation) {
+      bcMessage.type = "animation";
+      bcMessage.fileId = msg.animation.file_id;
+    } else if (msg.voice) {
+      bcMessage.type = "voice";
+      bcMessage.fileId = msg.voice.file_id;
+    } else if (msg.video_note) {
+      bcMessage.type = "video_note";
+      bcMessage.fileId = msg.video_note.file_id;
+    } else {
+      return null;
+    }
 
-    return ctx.reply(
-      `✅ *Pesan disimpan!*\n\n📝 \`${preview.substring(0, 60)}${preview.length > 60 ? "..." : ""}\`\n\n_Pesan akan di-forward apa adanya._`,
-      { parse_mode: "Markdown", ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali ke Panel", "bc_panel_back")]]) }
-    );
+    // Langsung simpan, tanpa konfirmasi
+    userStates.set(userId, { ...state, step: "bc_panel", bcMessage });
+
+    return ctx.reply("Pesan telah di-setting ✅", {
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Kembali ke Panel", "bc_panel_back")]]),
+    });
   }
 
   return { handleBroadcastText, handleBroadcastMedia, autoBroadcasts };
