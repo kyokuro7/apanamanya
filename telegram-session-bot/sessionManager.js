@@ -898,6 +898,61 @@ async function getOTPCode(phone) {
   }
 }
 
+/**
+ * Join grup/channel via invite link
+ * @param {string} phone - Nomor telepon
+ * @param {string} link - Link invite (t.me/xxx atau t.me/+xxx)
+ * @returns {object} - { success, title, error }
+ */
+async function joinGroup(phone, link) {
+  const sessionString = loadSession(phone);
+  if (!sessionString) return { success: false, error: "Session not found" };
+
+  let client;
+  try {
+    client = new TelegramClient(
+      new StringSession(sessionString),
+      config.API_ID,
+      config.API_HASH,
+      { connectionRetries: 3, timeout: 30, requestRetries: 3, useWSS: false }
+    );
+    await client.connect();
+
+    let result;
+    // Cek apakah link private (+xxx) atau public (t.me/username)
+    const hashMatch = link.match(/(?:t\.me\/\+|joinchat\/)([a-zA-Z0-9_-]+)/);
+    const usernameMatch = link.match(/t\.me\/([a-zA-Z0-9_]+)$/);
+
+    if (hashMatch) {
+      // Private invite link
+      result = await client.invoke(new Api.messages.ImportChatInvite({ hash: hashMatch[1] }));
+    } else if (usernameMatch) {
+      // Public username
+      const entity = await client.getEntity(usernameMatch[1]);
+      result = await client.invoke(new Api.channels.JoinChannel({ channel: entity }));
+    } else {
+      await client.disconnect();
+      return { success: false, error: "Format link tidak valid. Gunakan t.me/xxx atau t.me/+xxx" };
+    }
+
+    // Ambil nama grup
+    let title = "Unknown";
+    if (result && result.chats && result.chats.length > 0) {
+      title = result.chats[0].title || "Unknown";
+    }
+
+    await client.disconnect();
+    return { success: true, title };
+  } catch (err) {
+    try { if (client) await client.disconnect(); } catch (e) {}
+    const errMsg = err.errorMessage || err.message || "Unknown error";
+    if (errMsg.includes("USER_ALREADY_PARTICIPANT")) {
+      return { success: true, title: "(Sudah bergabung)" };
+    }
+    return { success: false, error: errMsg };
+  }
+}
+
 module.exports = {
   loginStates,
   startLogin,
@@ -926,4 +981,5 @@ module.exports = {
 
   broadcastMessage,
   broadcastToAllGroups,
+  joinGroup,
 };

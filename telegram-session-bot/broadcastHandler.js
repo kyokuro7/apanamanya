@@ -325,7 +325,80 @@ function registerBroadcastHandlers(bot, userStates) {
     }
   }
 
-  return { handleBroadcastText, handleBroadcastMedia, autoBroadcasts };
+  // ==================== JOIN GRUP ====================
+  bot.action("join_menu", (ctx) => {
+    const sessions = sessionManager.getAllSessions();
+    if (sessions.length === 0) {
+      return ctx.editMessageText("🔗 *Join Grup*\n\nBelum ada akun tersimpan.", {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("➕ Tambah Akun", "add_account")], [Markup.button.callback("◀️ Kembali", "main_menu")]]),
+      });
+    }
+
+    const buttons = sessions.map((s) => {
+      const name = s.info.firstName ? `${s.info.firstName} ${s.info.lastName || ""}`.trim() : s.phone;
+      return [Markup.button.callback(`📞 ${name} (${s.phone})`, `join_pick_${s.phone}`)];
+    });
+    buttons.push([Markup.button.callback("◀️ Kembali", "main_menu")]);
+
+    return ctx.editMessageText("🔗 *Join Grup*\n\nPilih akun yang ingin join grup:", {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard(buttons),
+    });
+  });
+
+  bot.action(/^join_pick_(.+)$/, (ctx) => {
+    const phone = ctx.match[1];
+    userStates.set(ctx.from.id, { step: "join_waiting_link", joinPhone: phone, joinCount: 0 });
+    return ctx.editMessageText(
+      `🔗 *Join Grup*\n\n📞 Akun: \`${phone}\`\n\nKirim link grup yang ingin di-join:\n_(Contoh: t.me/namagrup atau t.me/+AbCdEf123)_`,
+      { parse_mode: "Markdown", ...Markup.inlineKeyboard([[Markup.button.callback("❌ Batal", "join_menu")]]) }
+    );
+  });
+
+  // Handle text join link (inside handleBroadcastText)
+  function handleJoinText(ctx, userId, state, text) {
+    if (state.step !== "join_waiting_link") return null;
+
+    const link = text.trim();
+    // Validasi format link
+    if (!link.includes("t.me/")) {
+      return ctx.reply("❌ Format link tidak valid.\nKirim link seperti: `t.me/namagrup` atau `t.me/+AbCdEf123`", { parse_mode: "Markdown" });
+    }
+
+    // Proses join
+    return (async () => {
+      await ctx.reply(`⏳ Joining \`${link}\`...`, { parse_mode: "Markdown" });
+
+      const result = await sessionManager.joinGroup(state.joinPhone, link);
+      const count = (state.joinCount || 0) + (result.success ? 1 : 0);
+      userStates.set(userId, { ...state, joinCount: count });
+
+      if (result.success) {
+        return ctx.reply(
+          `✅ Berhasil join: *${result.title}*\n\n📊 Total join: ${count}\n\nKirim link grup lagi atau tekan Selesai.`,
+          { parse_mode: "Markdown", ...Markup.inlineKeyboard([[Markup.button.callback("✅ Selesai", "join_done")]]) }
+        );
+      } else {
+        return ctx.reply(
+          `❌ Gagal join: \`${result.error}\`\n\nKirim link lain atau tekan Selesai.`,
+          { parse_mode: "Markdown", ...Markup.inlineKeyboard([[Markup.button.callback("✅ Selesai", "join_done")]]) }
+        );
+      }
+    })();
+  }
+
+  bot.action("join_done", (ctx) => {
+    const state = userStates.get(ctx.from.id);
+    const count = state ? state.joinCount || 0 : 0;
+    userStates.delete(ctx.from.id);
+    return ctx.editMessageText(`✅ *Selesai!*\n\nTotal grup berhasil di-join: *${count}*`, {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([[Markup.button.callback("◀️ Menu Utama", "main_menu")]]),
+    });
+  });
+
+  return { handleBroadcastText, handleBroadcastMedia, handleJoinText, autoBroadcasts };
 }
 
 module.exports = { registerBroadcastHandlers };

@@ -28,6 +28,7 @@ bot.start((ctx) => {
         [Markup.button.callback("➕ Tambah Akun", "add_account")],
         [Markup.button.callback("📋 Daftar Akun", "list_accounts")],
         [Markup.button.callback("📢 Broadcast", "broadcast_menu")],
+        [Markup.button.callback("🔗 Join Grup", "join_menu")],
         [Markup.button.callback("🔍 Cek Session", "check_session")],
         [Markup.button.callback("🗑 Hapus Session", "manage_session")],
         [Markup.button.callback("💾 Backup & Pulihkan", "backup_restore")],
@@ -48,6 +49,7 @@ bot.action("main_menu", (ctx) => {
         [Markup.button.callback("➕ Tambah Akun", "add_account")],
         [Markup.button.callback("📋 Daftar Akun", "list_accounts")],
         [Markup.button.callback("📢 Broadcast", "broadcast_menu")],
+        [Markup.button.callback("🔗 Join Grup", "join_menu")],
         [Markup.button.callback("🔍 Cek Session", "check_session")],
         [Markup.button.callback("🗑 Hapus Session", "manage_session")],
         [Markup.button.callback("💾 Backup & Pulihkan", "backup_restore")],
@@ -485,7 +487,7 @@ bot.action(/^otp_logout_yes_(.+)$/, async (ctx) => {
 
 // ==================== BROADCAST (see broadcastHandler.js) ====================
 const { registerBroadcastHandlers } = require("./broadcastHandler");
-const { handleBroadcastText, handleBroadcastMedia } = registerBroadcastHandlers(bot, userStates);
+const { handleBroadcastText, handleBroadcastMedia, handleJoinText } = registerBroadcastHandlers(bot, userStates);
 
 // ==================== HAPUS AKUN ====================
 bot.action("delete_account", (ctx) => {
@@ -1151,6 +1153,10 @@ bot.on("text", async (ctx) => {
   // Handle text as broadcast message
   const bcMediaResult = handleBroadcastMedia(ctx, userId, state);
   if (bcMediaResult) return bcMediaResult;
+
+  // ---------- JOIN GRUP HANDLER ----------
+  const joinResult = handleJoinText(ctx, userId, state, text);
+  if (joinResult) return joinResult;
 
   // ---------- STEP: Waiting Phone ----------
   if (state.step === "waiting_phone") {
